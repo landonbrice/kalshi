@@ -7,6 +7,7 @@ import asyncio
 import typer
 
 from kalshi_ws.api.read import KalshiReadClient
+from kalshi_ws.cli._errors import friendly_errors
 from kalshi_ws.config import get_settings
 from kalshi_ws.state.schema import bootstrap
 
@@ -19,6 +20,7 @@ def _root() -> None:
 
 
 @app.command()
+@friendly_errors
 def hello() -> None:
     """Smoke test: authenticate against Kalshi and print one market."""
     settings = get_settings()
