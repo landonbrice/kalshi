@@ -11,8 +11,47 @@ pip install -e ".[dev]"
 cp .env.example .env  # then fill in real values
 ```
 
-## Smoke test (Phase 0)
+`.env` must point `KALSHI_PRIVATE_KEY_PATH` at an RSA PKCS8 PEM file (e.g., `./secrets/kalshi-private-key.pem`). The `secrets/` directory is gitignored.
+
+## Phase 0 complete
+
+- [x] Repo skeleton (`pyproject.toml`, ruff, mypy strict, pytest)
+- [x] Config loader (`kalshi_ws/config.py`)
+- [x] Risk limits (`kalshi_ws/risk.py`)
+- [x] RSA-PSS-SHA256 signing (`kalshi_ws/api/auth.py`)
+- [x] Async Kalshi client (`kalshi_ws/api/client.py`)
+- [x] SQLite ledger bootstrap (`kalshi_ws/state/`)
+- [x] `python -m kalshi_ws hello` prints a real Kalshi market
+
+## Smoke test
 
 ```bash
-python -m kalshi_ws hello KXNBA-25MAR03-NBA  # or any valid ticker
+python -m kalshi_ws hello
 ```
+
+Authenticates, prints one real market, and creates `data/kalshi.db` with the 7 ledger tables.
+
+## Testing
+
+```bash
+pytest                                    # offline (MockTransport + future cassettes)
+pytest --record-mode=once                 # re-record VCR cassettes (requires real .env)
+mypy kalshi_ws && mypy tests
+ruff check .
+```
+
+Recorded cassettes in `tests/cassettes/` (none yet in Phase 0) redact auth headers — safe to commit.
+
+## Layout
+
+```
+kalshi_ws/
+├── api/           # Kalshi REST/WS (auth, async client)
+├── state/         # SQLite ledger (schema, connection)
+├── cli/           # typer entrypoints
+├── config.py      # pydantic-settings (.env loader)
+├── risk.py        # hard limits (spec §4)
+└── __main__.py    # `python -m kalshi_ws`
+```
+
+Phases 1-4 (intel, decision, execution, dashboard) are in `docs/superpowers/specs/` and will be planned independently.
