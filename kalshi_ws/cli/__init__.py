@@ -8,6 +8,7 @@ import typer
 
 from kalshi_ws.api.client import KalshiClient
 from kalshi_ws.config import get_settings
+from kalshi_ws.state.schema import bootstrap
 
 app = typer.Typer(help="Kalshi workstation commands.", no_args_is_help=True)
 
@@ -21,6 +22,7 @@ def _root() -> None:
 def hello() -> None:
     """Smoke test: authenticate against Kalshi and print one market."""
     settings = get_settings()
+    bootstrap(settings.db_path)
 
     async def _go() -> None:
         async with KalshiClient(settings) as client:
