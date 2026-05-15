@@ -88,3 +88,18 @@ def test_friendly_errors_unknown_exception_reraises() -> None:
     # Either the runner captures it (exit_code != 0) or it raises; both are acceptable
     # as long as we DON'T quietly print a friendly message and exit 0.
     assert result.exit_code != 0
+
+
+def test_friendly_errors_sqlite_operational() -> None:
+    import sqlite3
+
+    err = sqlite3.OperationalError("unable to open database file")
+    app = _make_app(err)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 1
+    output = result.stderr + result.output
+    assert "database" in output.lower() or "sqlite" in output.lower()
+    # No raw traceback — friendly one-liner only.
+    assert "Traceback" not in output

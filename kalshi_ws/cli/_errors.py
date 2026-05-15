@@ -10,6 +10,7 @@ Unknown exceptions are re-raised so genuine bugs are not silently hidden.
 from __future__ import annotations
 
 import functools
+import sqlite3
 from collections.abc import Callable
 
 import httpx
@@ -35,6 +36,9 @@ def friendly_errors[F: Callable[..., None]](func: F) -> F:
                 f"File not found: {path}. Check KALSHI_PRIVATE_KEY_PATH in your .env.",
                 err=True,
             )
+            raise typer.Exit(1) from e
+        except sqlite3.Error as e:
+            typer.echo(f"Database error: {e}. Check KALSHI_DB_PATH in your .env.", err=True)
             raise typer.Exit(1) from e
         except ValidationError as e:
             typer.echo(f"Invalid data from Kalshi (validation error): {e}", err=True)

@@ -6,21 +6,34 @@ Scanners and decision-support code consume these models, never raw JSON dicts.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Market(BaseModel):
-    """Subset of fields used by Phase 1 scanners. Extend as needs grow."""
+    """Subset of fields used by Phase 1 scanners. Extend as needs grow.
+
+    Note on `yes_bid` / `yes_ask` defaults: Kalshi returns 0 and 100 (cents)
+    for sides with no live quote. Scanners that rank by `yes_ask - yes_bid`
+    MUST filter unquoted markets first (`yes_bid == 0 or yes_ask == 100`),
+    otherwise empty books rank highest by spread. Don't tighten these defaults
+    to non-zero values — real Kalshi markets legitimately publish 0/100.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     ticker: str
     title: str
     status: str
-    yes_bid: int = Field(default=0, description="Best YES bid in cents (0 if none).")
-    yes_ask: int = Field(default=100, description="Best YES ask in cents (100 if none).")
+    yes_bid: int = Field(default=0, description="Best YES bid in cents (0 if no bid).")
+    yes_ask: int = Field(default=100, description="Best YES ask in cents (100 if no ask).")
     volume: int = 0
     open_interest: int = 0
+    event_ticker: str | None = None
+    close_time: datetime | None = None
+    category: str | None = None  # Filled from event lookup by the scanner.
 
 
 class MarketsResponse(BaseModel):
@@ -30,3 +43,66 @@ class MarketsResponse(BaseModel):
 
     markets: list[Market]
     cursor: str | None = None
+
+
+class IncentiveProgram(BaseModel):
+    """One LIP/VIP program tied to a market. Mirrors GET /incentive_programs entry."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    market_ticker: str
+    incentive_type: str  # "liquidity" or "volume"
+    period_reward: int = 0  # cents
+    target_size_fp: str = "0"  # string-encoded float; convert at use site
+    start_date: datetime
+    end_date: datetime
+    paid_out: bool = False
+    discount_factor_bps: int = 0
+
+    def target_size(self) -> float:
+        return float(self.target_size_fp)
+
+
+class IncentiveProgramsResponse(BaseModel):
+    """Envelope returned by GET /incentive_programs."""
+
+    model_config = ConfigDict(extra="allow")
+
+    incentive_programs: list[IncentiveProgram] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class OrderbookSnapshot(BaseModel):
+    """Aggregated orderbook. Sides are [price_dollars, size] pairs, ascending by price."""
+
+    model_config = ConfigDict(extra="allow")
+
+    yes: list[list[str]] = Field(default_factory=list)
+    no: list[list[str]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unwrap_orderbook_fp(cls, data: Any) -> Any:
+        # Kalshi nests the book under "orderbook_fp" with side keys "yes_dollars" / "no_dollars".
+        if isinstance(data, dict) and "orderbook_fp" in data:
+            ob = data.get("orderbook_fp") or {}
+            return {
+                "yes": ob.get("yes_dollars") or [],
+                "no": ob.get("no_dollars") or [],
+            }
+        return data
+
+    def top_yes_size(self) -> float:
+        """Aggregate size at the best YES bid (highest yes price). 0 if empty."""
+        return float(self.yes[-1][1]) if self.yes else 0.0
+
+    def top_no_size(self) -> float:
+        """Aggregate size at the best NO bid (highest no price). 0 if empty."""
+        return float(self.no[-1][1]) if self.no else 0.0
+
+    def best_yes_price(self) -> float:
+        return float(self.yes[-1][0]) if self.yes else 0.0
+
+    def best_no_price(self) -> float:
+        return float(self.no[-1][0]) if self.no else 0.0
