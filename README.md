@@ -34,13 +34,12 @@ Authenticates, prints one real market, and creates `data/kalshi.db` with the 7 l
 ## Testing
 
 ```bash
-pytest                                    # offline (MockTransport + future cassettes)
-pytest --record-mode=once                 # re-record VCR cassettes (requires real .env)
+pytest                                    # offline (httpx.MockTransport)
 mypy kalshi_ws && mypy tests
 ruff check .
 ```
 
-Recorded cassettes in `tests/cassettes/` (none yet in Phase 0) redact auth headers — safe to commit.
+Cassette infra was removed in Phase 1 prereqs. It will return when the first test needs to replay a real Kalshi response.
 
 ## Layout
 
