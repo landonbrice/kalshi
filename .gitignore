@@ -8,4 +8,6 @@ secrets/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+dist/
+*.egg-info/
 .DS_Store

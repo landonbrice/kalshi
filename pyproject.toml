@@ -15,7 +15,6 @@ dependencies = [
 dev = [
   "pytest>=8.2",
   "pytest-recording>=0.13",
-  "vcrpy>=6.0",
   "ruff>=0.5",
   "mypy>=1.10",
 ]
