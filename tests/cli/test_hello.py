@@ -17,9 +17,13 @@ def test_hello_bootstraps_db_and_prints_market(tmp_path: Path) -> None:
     fake_settings.base_url = "https://api.example.com/v2"
     fake_settings.db_path = fake_db
 
+    from kalshi_ws.api.models import Market, MarketsResponse
+
     fake_client_instance = MagicMock()
     fake_client_instance.get_markets = AsyncMock(
-        return_value={"markets": [{"ticker": "TEST-XYZ", "title": "Test market"}]}
+        return_value=MarketsResponse(
+            markets=[Market(ticker="TEST-XYZ", title="Test market", status="active")],
+        )
     )
     fake_client_cm = AsyncMock()
     fake_client_cm.__aenter__.return_value = fake_client_instance

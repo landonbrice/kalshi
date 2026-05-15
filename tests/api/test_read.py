@@ -34,10 +34,14 @@ def test_get_markets_signs_and_returns_payload(settings: Settings) -> None:
         captured["url"] = str(request.url)
         captured["headers"] = dict(request.headers)
         return httpx.Response(
-            200, json={"markets": [{"ticker": "TEST-1", "title": "Test market"}]}
+            200,
+            json={
+                "markets": [{"ticker": "TEST-1", "title": "Test market", "status": "active"}],
+                "cursor": None,
+            },
         )
 
-    async def run() -> dict[str, object]:
+    async def run() -> object:
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as inner:
             client = KalshiReadClient(settings, client=inner)
@@ -45,7 +49,12 @@ def test_get_markets_signs_and_returns_payload(settings: Settings) -> None:
 
     result = asyncio.run(run())
 
-    assert result == {"markets": [{"ticker": "TEST-1", "title": "Test market"}]}
+    from kalshi_ws.api.models import MarketsResponse
+
+    assert isinstance(result, MarketsResponse)
+    assert len(result.markets) == 1
+    assert result.markets[0].ticker == "TEST-1"
+    assert result.markets[0].title == "Test market"
     url = str(captured["url"])
     assert url.startswith("https://api.test.example/trade-api/v2/markets")
     assert "limit=1" in url
@@ -53,7 +62,6 @@ def test_get_markets_signs_and_returns_payload(settings: Settings) -> None:
     assert isinstance(headers, dict)
     assert headers["kalshi-access-key"] == "abc-123"
     assert headers["kalshi-access-timestamp"].isdigit()
-    # RSA-2048 PSS signature is 256 bytes = 344 base64 chars.
     sig = headers["kalshi-access-signature"]
     assert len(sig) == 344
     import base64

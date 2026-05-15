@@ -7,12 +7,12 @@ methods. Phase 2 will introduce `kalshi_ws/api/write.py` for those.
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 from kalshi_ws.api.auth import signed_headers
+from kalshi_ws.api.models import MarketsResponse
 from kalshi_ws.config import Settings
 
 
@@ -48,7 +48,7 @@ class KalshiReadClient:
             path=urlparse(url).path,
         )
 
-    async def get_markets(self, *, limit: int = 1) -> dict[str, Any]:
+    async def get_markets(self, *, limit: int = 1) -> MarketsResponse:
         url = f"{self._settings.base_url}/markets"
         r = await self._client.get(
             url,
@@ -56,5 +56,4 @@ class KalshiReadClient:
             headers=self._auth_headers("GET", url),
         )
         r.raise_for_status()
-        data: dict[str, Any] = r.json()
-        return data
+        return MarketsResponse.model_validate(r.json())

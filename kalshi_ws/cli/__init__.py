@@ -26,12 +26,11 @@ def hello() -> None:
 
     async def _go() -> None:
         async with KalshiReadClient(settings) as client:
-            payload = await client.get_markets(limit=1)
-            markets = payload.get("markets") or []
-            if not markets:
+            resp = await client.get_markets(limit=1)
+            if not resp.markets:
                 typer.echo("OK: authenticated, but no markets returned.")
                 return
-            m = markets[0]
-            typer.echo(f"{m.get('ticker')} — {m.get('title')}")
+            m = resp.markets[0]
+            typer.echo(f"{m.ticker} — {m.title}")
 
     asyncio.run(_go())
