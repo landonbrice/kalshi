@@ -1,4 +1,8 @@
-"""Minimal async Kalshi API client. Phase 0 scope: one signed read."""
+"""Minimal async Kalshi REST client — read methods only.
+
+Read/write split per spec §3.1: this module must NOT grow order-placement
+methods. Phase 2 will introduce `kalshi_ws/api/write.py` for those.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from kalshi_ws.api.auth import signed_headers
 from kalshi_ws.config import Settings
 
 
-class KalshiClient:
+class KalshiReadClient:
     def __init__(
         self,
         settings: Settings,
@@ -24,7 +28,7 @@ class KalshiClient:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout)
 
-    async def __aenter__(self) -> KalshiClient:
+    async def __aenter__(self) -> KalshiReadClient:
         return self
 
     async def __aexit__(

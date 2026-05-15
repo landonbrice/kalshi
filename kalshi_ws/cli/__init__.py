@@ -6,7 +6,7 @@ import asyncio
 
 import typer
 
-from kalshi_ws.api.client import KalshiClient
+from kalshi_ws.api.read import KalshiReadClient
 from kalshi_ws.config import get_settings
 from kalshi_ws.state.schema import bootstrap
 
@@ -25,7 +25,7 @@ def hello() -> None:
     bootstrap(settings.db_path)
 
     async def _go() -> None:
-        async with KalshiClient(settings) as client:
+        async with KalshiReadClient(settings) as client:
             payload = await client.get_markets(limit=1)
             markets = payload.get("markets") or []
             if not markets:

@@ -26,7 +26,7 @@ def test_hello_bootstraps_db_and_prints_market(tmp_path: Path) -> None:
     fake_client_cm.__aexit__.return_value = None
 
     with patch("kalshi_ws.cli.get_settings", return_value=fake_settings), patch(
-        "kalshi_ws.cli.KalshiClient", return_value=fake_client_cm
+        "kalshi_ws.cli.KalshiReadClient", return_value=fake_client_cm
     ), patch("kalshi_ws.cli.bootstrap") as mock_bootstrap:
         runner = CliRunner()
         result = runner.invoke(app, ["hello"])

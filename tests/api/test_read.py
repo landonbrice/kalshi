@@ -6,7 +6,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from kalshi_ws.api.client import KalshiClient
+from kalshi_ws.api.read import KalshiReadClient
 from kalshi_ws.config import Settings
 
 
@@ -40,7 +40,7 @@ def test_get_markets_signs_and_returns_payload(settings: Settings) -> None:
     async def run() -> dict[str, object]:
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as inner:
-            client = KalshiClient(settings, client=inner)
+            client = KalshiReadClient(settings, client=inner)
             return await client.get_markets(limit=1)
 
     result = asyncio.run(run())
