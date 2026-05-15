@@ -50,4 +50,7 @@ def test_signed_headers_shape(rsa_keypair: tuple[Path, rsa.RSAPublicKey]) -> Non
     )
     assert headers["KALSHI-ACCESS-KEY"] == "abc-123"
     assert headers["KALSHI-ACCESS-TIMESTAMP"].isdigit()
-    assert len(headers["KALSHI-ACCESS-SIGNATURE"]) > 0
+    # RSA-2048 PSS signature is 256 bytes = 344 base64 chars.
+    sig = headers["KALSHI-ACCESS-SIGNATURE"]
+    assert len(sig) == 344
+    base64.b64decode(sig)  # raises if not valid base64
