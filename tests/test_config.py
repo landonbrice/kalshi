@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from kalshi_ws.config import Settings
 
@@ -13,7 +14,7 @@ def test_settings_loads_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     monkeypatch.setenv("KALSHI_BASE_URL", "https://api.example.com/v2")
     monkeypatch.setenv("KALSHI_DB_PATH", str(tmp_path / "test.db"))
 
-    s = Settings()
+    s = Settings()  # type: ignore[call-arg]
 
     assert s.api_key_id == "abc-123"
     assert s.private_key_path == key_file
@@ -24,5 +25,5 @@ def test_settings_loads_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 def test_settings_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KALSHI_API_KEY_ID", raising=False)
     monkeypatch.delenv("KALSHI_PRIVATE_KEY_PATH", raising=False)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore[call-arg]
