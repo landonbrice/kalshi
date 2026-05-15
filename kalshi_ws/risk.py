@@ -1,0 +1,9 @@
+"""Hard risk limits. Spec §4. No bypass without editing this file."""
+
+PER_MARKET_MAX_POSITION_USD: int = 50
+SINGLE_ORDER_MAX_USD: int = 20
+DAILY_LOSS_LIMIT_USD: int = 35
+MAX_TOTAL_OPEN_EXPOSURE_USD: int = 400
+MIN_TICKET_SIZE_USD: int = 1
+SANCTIONED_MODE_MAX_DURATION_HOURS: int = 4
+CONSECUTIVE_LOSSES_KILL: int = 5
