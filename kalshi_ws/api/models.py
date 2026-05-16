@@ -34,7 +34,8 @@ class Market(BaseModel):
     status: str
     yes_bid: int = Field(default=0, description="Best YES bid in cents (0 if no bid).")
     yes_ask: int = Field(default=100, description="Best YES ask in cents (100 if no ask).")
-    volume: int = 0
+    volume: int = 0  # lifetime contracts
+    volume_24h: int = 0  # contracts traded in the last 24h; 0 = stale / no flow
     open_interest: int = 0
     event_ticker: str | None = None
     close_time: datetime | None = None
@@ -58,6 +59,9 @@ class Market(BaseModel):
         if "volume" not in data and "volume_fp" in data:
             with contextlib.suppress(TypeError, ValueError):
                 data["volume"] = int(float(data["volume_fp"]))
+        if "volume_24h" not in data and "volume_24h_fp" in data:
+            with contextlib.suppress(TypeError, ValueError):
+                data["volume_24h"] = int(float(data["volume_24h_fp"]))
         return data
 
 

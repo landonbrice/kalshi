@@ -65,6 +65,22 @@ def test_market_missing_required_raises() -> None:
         Market.model_validate({"title": "no ticker"})
 
 
+def test_market_coerces_volume_24h_from_volume_24h_fp() -> None:
+    """Live Kalshi sends volume_24h_fp as a stringified float."""
+    payload = {
+        "ticker": "KX-FOO",
+        "title": "Foo",
+        "status": "active",
+        "yes_bid_dollars": "0.4500",
+        "yes_ask_dollars": "0.5500",
+        "volume_24h_fp": "123.0",
+    }
+    m = Market.model_validate(payload)
+    assert m.volume_24h == 123
+    assert m.yes_bid == 45
+    assert m.yes_ask == 55
+
+
 def test_markets_response_parses_list_and_cursor() -> None:
     payload = {
         "markets": [

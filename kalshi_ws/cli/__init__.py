@@ -64,7 +64,7 @@ def scan_lip(
         0.02, "--min-spread", help="Minimum quotable spread (dollars)."
     ),
     max_capital: float = typer.Option(
-        150.0, "--max-capital", help="Per-market capital cap (dollars)."
+        50.0, "--max-capital", help="Per-market capital cap (dollars; default = risk.py)."
     ),
     concurrent: int = typer.Option(
         10, "--concurrent", help="Parallel orderbook fetches."
@@ -72,10 +72,15 @@ def scan_lip(
     out: Path = typer.Option(  # noqa: B008  (typer idiom)
         DEFAULT_LIP_CSV,
         "--out",
-        help="CSV output path. Includes both PLAY and PASS rows.",
+        help="CSV output path. Includes PLAY / SKIP / ANOMALY rows.",
     ),
 ) -> None:
-    """Rank LIP markets by expected $/day. Writes CSV + prints top N PLAYs."""
+    """Rank LIP markets by expected $/day.
+
+    Writes CSV + prints top N PLAYs. ANOMALYs (math output exceeds 5% daily
+    return on capital — formula or data error suspected) are surfaced
+    separately because they're not safe to deploy without investigation.
+    """
     settings = get_settings()
     bootstrap(settings.db_path)
     gate = GateParams(
@@ -97,25 +102,41 @@ def scan_lip(
     candidates = asyncio.run(_go())
     write_candidates_csv(out, candidates)
 
-    plays = [c for c in candidates if c.ev.play]
-    passes = len(candidates) - len(plays)
+    plays = [c for c in candidates if c.ev.decision.value == "PLAY"]
+    anomalies = [c for c in candidates if c.ev.decision.value == "ANOMALY"]
+    skips = len(candidates) - len(plays) - len(anomalies)
     typer.echo(
-        f"Scanned {len(candidates)} markets that passed cheap gates "
-        f"({len(plays)} PLAY, {passes} PASS). CSV -> {out}\n"
+        f"Scanned {len(candidates)} markets ({len(plays)} PLAY, "
+        f"{len(anomalies)} ANOMALY, {skips} SKIP). CSV -> {out}\n"
     )
-    if not plays:
-        typer.echo("No PLAY candidates at current thresholds.")
-        return
 
-    typer.echo(f"{'#':>3}  {'EV/day':>7}  {'reward':>7}  {'share':>5}  "
-               f"{'cap$':>5}  {'days':>4}  {'sprd':>4}  ticker | title")
-    for i, c in enumerate(plays[:top], 1):
+    if plays:
+        typer.echo("=== PLAY ===")
         typer.echo(
-            f"{i:>3}  ${c.ev.ev_per_day:>6.2f}  ${c.ev.reward_per_day:>6.2f}  "
-            f"{c.ev.share:>5.2f}  ${c.ev.capital_locked:>4.0f}  "
-            f"{c.ev.days_remaining:>4.1f}  {c.ev.spread:>4.2f}  "
-            f"{c.market.ticker} | {c.market.title[:60]}"
+            f"{'#':>3}  {'EV/day':>7}  {'ev%cap':>6}  {'reward':>7}  "
+            f"{'share':>5}  {'cap$':>5}  {'days':>4}  {'sprd':>4}  ticker | title"
         )
+        for i, c in enumerate(plays[:top], 1):
+            typer.echo(
+                f"{i:>3}  ${c.ev.ev_per_day:>6.2f}  "
+                f"{c.ev.ev_pct_of_capital * 100:>5.1f}%  "
+                f"${c.ev.reward_per_day:>6.2f}  "
+                f"{c.ev.share:>5.2f}  ${c.ev.capital_locked:>4.0f}  "
+                f"{c.ev.days_remaining:>4.1f}  {c.ev.spread:>4.2f}  "
+                f"{c.market.ticker} | {c.market.title[:60]}"
+            )
+
+    if anomalies:
+        typer.echo("\n=== ANOMALY (investigate before any deployment) ===")
+        for c in anomalies[:top]:
+            typer.echo(
+                f"  {c.ev.ev_pct_of_capital * 100:>5.1f}% daily  "
+                f"${c.ev.ev_per_day:>6.2f}/day on ${c.ev.capital_locked:>4.0f}  "
+                f"{c.market.ticker} | {c.ev.reason}"
+            )
+
+    if not plays and not anomalies:
+        typer.echo("No PLAY or ANOMALY candidates at current thresholds.")
 
 
 def _write_meta(
@@ -126,6 +147,7 @@ def _write_meta(
     iteration: int,
     total: int,
     plays: int,
+    anomalies: int,
     category: str | None,
     duration_seconds: float,
 ) -> None:
@@ -137,6 +159,9 @@ def _write_meta(
         "iteration": iteration,
         "candidates_total": total,
         "candidates_play": plays,
+        "candidates_anomaly": anomalies,
+        "candidates_skip": total - plays - anomalies,
+        # back-compat alias for dashboard agents written against the v1 meta
         "candidates_pass": total - plays,
         "category_filter": category,
     }
@@ -159,7 +184,9 @@ def scan_lip_loop(
     category: str = typer.Option(None, "--category", "-c", help="Optional category filter."),
     min_ev: float = typer.Option(1.0, "--min-ev", help="EV/day floor in dollars."),
     min_spread: float = typer.Option(0.02, "--min-spread", help="Minimum quotable spread."),
-    max_capital: float = typer.Option(150.0, "--max-capital", help="Per-market capital cap."),
+    max_capital: float = typer.Option(
+        50.0, "--max-capital", help="Per-market capital cap (risk.py default)."
+    ),
     concurrent: int = typer.Option(10, "--concurrent", help="Parallel orderbook fetches."),
     out: Path = typer.Option(  # noqa: B008  (typer idiom)
         DEFAULT_LIP_CSV, "--out", help="CSV output path; sidecar .meta.json next to it."
@@ -190,7 +217,7 @@ def scan_lip_loop(
         + (f" max_iter={max_iterations}" if max_iterations else "")
     )
 
-    async def _one_iteration() -> tuple[int, int]:
+    async def _one_iteration() -> tuple[int, int, int]:
         async with KalshiReadClient(settings) as client:
             cands = await scan_lip_candidates(
                 client,
@@ -200,8 +227,9 @@ def scan_lip_loop(
                 now=datetime.now(UTC),
             )
         write_candidates_csv(out, cands)
-        plays = sum(1 for c in cands if c.ev.play)
-        return len(cands), plays
+        plays = sum(1 for c in cands if c.ev.decision.value == "PLAY")
+        anomalies = sum(1 for c in cands if c.ev.decision.value == "ANOMALY")
+        return len(cands), plays, anomalies
 
     iteration = 0
     try:
@@ -210,7 +238,7 @@ def scan_lip_loop(
             scan_started = datetime.now(UTC)
             t0 = time.monotonic()
             try:
-                total, plays = asyncio.run(_one_iteration())
+                total, plays, anomalies = asyncio.run(_one_iteration())
                 elapsed = time.monotonic() - t0
                 _write_meta(
                     meta_path,
@@ -219,12 +247,13 @@ def scan_lip_loop(
                     iteration=iteration,
                     total=total,
                     plays=plays,
+                    anomalies=anomalies,
                     category=category,
                     duration_seconds=elapsed,
                 )
                 typer.echo(
                     f"[{scan_started.isoformat()}] iter={iteration} "
-                    f"total={total} play={plays} took={elapsed:.1f}s"
+                    f"total={total} play={plays} anomaly={anomalies} took={elapsed:.1f}s"
                 )
             except Exception as e:  # log + keep going
                 typer.echo(

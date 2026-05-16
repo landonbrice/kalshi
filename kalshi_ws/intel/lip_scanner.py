@@ -89,20 +89,24 @@ async def scan_lip_candidates(
 def _passes_cheap_gates(
     m: Market, p: IncentiveProgram, gate: GateParams, now: datetime
 ) -> bool:
-    """Filters that don't require an orderbook fetch. Cuts the 3k+ universe sharply."""
+    """Filters that don't require an orderbook fetch. Cuts the 3k+ universe sharply.
+
+    Stays loose on capital: the post-orderbook `evaluate()` enforces the real
+    per-market capital cap using effective_size after risk bounding. This
+    function only rejects markets that can never be evaluated meaningfully —
+    closed, empty book, narrow spread, expiring LIP, or no recent flow.
+    """
     if m.status != "active":
         return False
     if m.yes_bid == 0 or m.yes_ask == 100:
+        return False
+    if m.volume_24h < gate.min_volume_24h:
         return False
     spread_cents = m.yes_ask - m.yes_bid
     if spread_cents < gate.min_spread * 100:
         return False
     days = (p.end_date - now).total_seconds() / 86400
-    if days < gate.min_days_remaining:
-        return False
-    mid_dollars = (m.yes_bid + m.yes_ask) / 200.0
-    capital = p.target_size() * max(mid_dollars, 1.0 - mid_dollars)
-    return capital <= gate.max_capital
+    return days >= gate.min_days_remaining
 
 
 async def _fetch_event_categories(
@@ -168,12 +172,14 @@ async def _score_with_orderbooks(
             status=m.status,
             top_yes_size=ob.top_yes_size(),
             top_no_size=ob.top_no_size(),
+            volume_24h=m.volume_24h,
         )
         prog = LipProgram(
             market_ticker=p.market_ticker,
             period_reward_cents=p.period_reward,
             target_size=p.target_size(),
             end_date=p.end_date,
+            discount_factor_bps=p.discount_factor_bps,
         )
         ev = evaluate(snap, prog, now=now, gate=gate)
         return LipCandidate(market=m, program=p, category=cat, snapshot=snap, ev=ev)
@@ -195,22 +201,29 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
         "ticker",
         "title",
         "category",
-        "play",
+        "decision",  # Phase A: PLAY / SKIP / ANOMALY
+        "play",  # back-compat bool for dashboard agent (decision == PLAY)
         "reason",
         "ev_per_day",
+        "ev_pct_of_capital",
         "reward_per_day",
+        "effective_period_reward",
+        "discount_multiplier",
         "share",
+        "effective_size",
         "opp_cost_per_day",
         "capital_locked",
         "days_remaining",
         "spread",
         "mid",
+        "volume_24h",
         "yes_bid_cents",
         "yes_ask_cents",
         "top_yes_size",
         "top_no_size",
         "lip_target_size",
         "lip_period_reward_cents",
+        "lip_discount_factor_bps",
         "lip_end_date",
     ]
     with tmp.open("w", newline="") as f:
@@ -222,22 +235,29 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
                     "ticker": c.market.ticker,
                     "title": c.market.title,
                     "category": c.category,
-                    "play": c.ev.play,
+                    "decision": c.ev.decision.value,
+                    "play": c.ev.decision.value == "PLAY",
                     "reason": c.ev.reason,
                     "ev_per_day": f"{c.ev.ev_per_day:.4f}",
+                    "ev_pct_of_capital": f"{c.ev.ev_pct_of_capital:.4f}",
                     "reward_per_day": f"{c.ev.reward_per_day:.4f}",
+                    "effective_period_reward": f"{c.ev.effective_period_reward:.2f}",
+                    "discount_multiplier": f"{c.ev.discount_multiplier:.2f}",
                     "share": f"{c.ev.share:.4f}",
+                    "effective_size": c.ev.effective_size,
                     "opp_cost_per_day": f"{c.ev.opp_cost_per_day:.4f}",
                     "capital_locked": f"{c.ev.capital_locked:.4f}",
                     "days_remaining": f"{c.ev.days_remaining:.2f}",
                     "spread": f"{c.ev.spread:.4f}",
                     "mid": f"{c.ev.mid:.4f}",
+                    "volume_24h": c.snapshot.volume_24h,
                     "yes_bid_cents": c.market.yes_bid,
                     "yes_ask_cents": c.market.yes_ask,
                     "top_yes_size": c.snapshot.top_yes_size,
                     "top_no_size": c.snapshot.top_no_size,
                     "lip_target_size": c.program.target_size(),
                     "lip_period_reward_cents": c.program.period_reward,
+                    "lip_discount_factor_bps": c.program.discount_factor_bps,
                     "lip_end_date": c.program.end_date.isoformat(),
                 }
             )
