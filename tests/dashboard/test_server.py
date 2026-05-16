@@ -447,3 +447,29 @@ def test_index_shows_iteration_when_meta_present(client_with_data: TestClient) -
     resp = client_with_data.get("/")
     assert resp.status_code == 200
     assert "iter " in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Tests: new book / depth / req columns
+# ---------------------------------------------------------------------------
+
+
+def test_index_renders_book_column(client_with_data: TestClient) -> None:
+    """book cell must render bid/ask as '0.48 / 0.53' (fixture values)."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "0.48 / 0.53" in resp.text
+
+
+def test_index_renders_depth_column(client_with_data: TestClient) -> None:
+    """depth cell must contain the multiplication sign between two sizes."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "×" in resp.text
+
+
+def test_index_renders_required_column(client_with_data: TestClient) -> None:
+    """req cell must render lip_target_size=10 from fixture as '10'."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert ">10<" in resp.text

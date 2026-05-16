@@ -199,6 +199,12 @@
                             white-space: normal; word-break: break-word;
                             min-width: 200px; }
     tbody td.col-ev       { color: #3fb950; font-weight: 700; }
+    tbody td.col-book     { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+                            text-align: right; white-space: nowrap; }
+    tbody td.col-depth    { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+                            text-align: right; white-space: nowrap; }
+    tbody td.col-req      { text-align: right; white-space: nowrap; }
+    thead th.col-book, thead th.col-depth, thead th.col-req { text-align: right; }
     .no-data-row td {
       text-align: center;
       color: #8b949e;
@@ -358,10 +364,13 @@
           <th class="col-ticker">ticker</th>
           <th class="col-category">category</th>
           <th>EV/day</th>
-          <th>share</th>
           <th>cap$</th>
+          <th class="col-req">req</th>
           <th>days</th>
           <th>spread</th>
+          <th class="col-book">book</th>
+          <th>share</th>
+          <th class="col-depth">depth</th>
           <th class="col-title">title</th>
         </tr>
       </thead>
@@ -378,10 +387,13 @@
             {% endif %}
           </td>
           <td class="col-ev">${{ "%.2f"|format(c.ev_per_day) }}</td>
-          <td>{{ "%.2f"|format(c.share) }}</td>
           <td>${{ "%.0f"|format(c.capital_locked) }}</td>
+          <td class="col-req">{{ c.display_req }}</td>
           <td>{{ "%.1f"|format(c.days_remaining) }}</td>
           <td>{{ "%.2f"|format(c.spread) }}</td>
+          <td class="col-book">{{ c.display_book }}</td>
+          <td>{{ "%.2f"|format(c.share) }}</td>
+          <td class="col-depth">{{ c.display_depth }}</td>
           <td class="col-title">{{ c.title }}</td>
         </tr>
         {% endfor %}
@@ -391,8 +403,11 @@
           <td class="col-total-label" colspan="2">TOTAL &middot; {{ row_totals.play_count }} plays</td>
           <td></td>
           <td class="col-total-ev">${{ "%.2f"|format(row_totals.ev_per_day) }}</td>
-          <td></td>
           <td class="col-total-cap">${{ "%.0f"|format(row_totals.capital) }}</td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
           <td></td>
           <td></td>
           <td></td>

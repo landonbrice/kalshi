@@ -45,6 +45,10 @@ class Candidate(TypedDict):
     lip_target_size: float
     lip_period_reward_cents: int
     lip_end_date: str
+    # Pre-formatted display strings for new dashboard columns
+    display_book: str
+    display_depth: str
+    display_req: str
 
 
 class Meta(TypedDict):
@@ -116,6 +120,32 @@ def _parse_int(val: str) -> int:
         return 0
 
 
+# ---------------------------------------------------------------------------
+# Display formatters
+# ---------------------------------------------------------------------------
+
+
+def fmt_size(n: float) -> str:
+    """Format a size number: strips trailing zeros, returns '—' for zero."""
+    if n == 0:
+        return "—"
+    return f"{n:g}"
+
+
+def fmt_book(bid_cents: int, ask_cents: int) -> str:
+    """Format bid/ask as '0.27 / 0.71', or '—' when both are unquoted (0 or 100)."""
+    if bid_cents in (0, 100) and ask_cents in (0, 100):
+        return "—"
+    return f"{bid_cents / 100:.2f} / {ask_cents / 100:.2f}"
+
+
+def fmt_depth(yes_size: float, no_size: float) -> str:
+    """Format top-of-book sizes as 'Y × N', or '—' when both are zero."""
+    if yes_size == 0 and no_size == 0:
+        return "—"
+    return f"{yes_size:g} × {no_size:g}"
+
+
 def load_candidates(csv_path: Path) -> list[Candidate]:
     """Read lip_candidates.csv and return rows sorted PLAY-first by ev_per_day desc.
 
@@ -132,6 +162,11 @@ def load_candidates(csv_path: Path) -> list[Candidate]:
             play_val = raw.get("play", "False")
             is_play = play_val.strip().lower() in {"true", "1", "yes"}
             ticker_val = raw.get("ticker", "")
+            yes_bid = _parse_int(raw.get("yes_bid_cents", "0"))
+            yes_ask = _parse_int(raw.get("yes_ask_cents", "0"))
+            top_yes = _parse_float(raw.get("top_yes_size", "0"))
+            top_no = _parse_float(raw.get("top_no_size", "0"))
+            lip_target = _parse_float(raw.get("lip_target_size", "0"))
             candidate: Candidate = {
                 "ticker": ticker_val,
                 "url": kalshi_market_url(ticker_val),
@@ -147,15 +182,18 @@ def load_candidates(csv_path: Path) -> list[Candidate]:
                 "days_remaining": _parse_float(raw.get("days_remaining", "0")),
                 "spread": _parse_float(raw.get("spread", "0")),
                 "mid": _parse_float(raw.get("mid", "0")),
-                "yes_bid_cents": _parse_int(raw.get("yes_bid_cents", "0")),
-                "yes_ask_cents": _parse_int(raw.get("yes_ask_cents", "0")),
-                "top_yes_size": _parse_float(raw.get("top_yes_size", "0")),
-                "top_no_size": _parse_float(raw.get("top_no_size", "0")),
-                "lip_target_size": _parse_float(raw.get("lip_target_size", "0")),
+                "yes_bid_cents": yes_bid,
+                "yes_ask_cents": yes_ask,
+                "top_yes_size": top_yes,
+                "top_no_size": top_no,
+                "lip_target_size": lip_target,
                 "lip_period_reward_cents": _parse_int(
                     raw.get("lip_period_reward_cents", "0")
                 ),
                 "lip_end_date": raw.get("lip_end_date", ""),
+                "display_book": fmt_book(yes_bid, yes_ask),
+                "display_depth": fmt_depth(top_yes, top_no),
+                "display_req": fmt_size(lip_target),
             }
             rows.append(candidate)
 

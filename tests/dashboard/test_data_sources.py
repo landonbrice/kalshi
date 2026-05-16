@@ -13,6 +13,9 @@ from kalshi_ws.dashboard.data_sources import (
     STALE_THRESHOLD_SECONDS,
     Candidate,
     concentration,
+    fmt_book,
+    fmt_depth,
+    fmt_size,
     freshness,
     kalshi_market_url,
     load_candidates,
@@ -390,6 +393,9 @@ def _make_candidate(ticker: str, play: bool = True) -> Candidate:
         lip_target_size=10.0,
         lip_period_reward_cents=3000,
         lip_end_date="2026-05-21T00:00:00+00:00",
+        display_book=fmt_book(48, 53),
+        display_depth=fmt_depth(20.0, 30.0),
+        display_req=fmt_size(10.0),
     )
 
 
@@ -473,3 +479,49 @@ def test_kalshi_market_url_single_segment_ticker() -> None:
     # Defensive: no hyphens -> series page only.
     url = kalshi_market_url("KXFOO")
     assert url == "https://kalshi.com/markets/kxfoo"
+
+
+# ---------------------------------------------------------------------------
+# fmt_size / fmt_book / fmt_depth
+# ---------------------------------------------------------------------------
+
+
+def test_fmt_size_integer() -> None:
+    assert fmt_size(250.0) == "250"
+
+
+def test_fmt_size_float() -> None:
+    assert fmt_size(4.91) == "4.91"
+
+
+def test_fmt_size_zero() -> None:
+    assert fmt_size(0) == "—"
+
+
+def test_fmt_book_normal() -> None:
+    assert fmt_book(27, 71) == "0.27 / 0.71"
+
+
+def test_fmt_book_zero_bid_ask() -> None:
+    assert fmt_book(0, 0) == "—"
+
+
+def test_fmt_book_hundred_bid_ask() -> None:
+    assert fmt_book(100, 100) == "—"
+
+
+def test_fmt_book_mixed_unquoted() -> None:
+    # Both must be in (0, 100) to return dash; if only one is, render normally
+    assert fmt_book(0, 53) == "0.00 / 0.53"
+
+
+def test_fmt_depth_normal() -> None:
+    assert fmt_depth(20.0, 30.0) == "20 × 30"
+
+
+def test_fmt_depth_float() -> None:
+    assert fmt_depth(4.91, 3.5) == "4.91 × 3.5"
+
+
+def test_fmt_depth_zero() -> None:
+    assert fmt_depth(0, 0) == "—"
