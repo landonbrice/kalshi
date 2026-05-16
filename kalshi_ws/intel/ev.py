@@ -1,24 +1,33 @@
-"""EV math for LIP market candidates — Phase A of the v2 spec.
+"""EV math for LIP market candidates — v2 spec, Phases A+B+C.
 
 Pure functions; no I/O. The orchestrator in lip_scanner.py feeds these
 snapshots assembled from the Kalshi API.
 
-Phase A scope (per EV_FORMULA_v2_SPEC.md §8.A):
-- Apply discount_factor_bps to effective reward (pessimistic: always on,
-  since Kalshi doesn't expose reference_spread_cents to evaluate conditionally)
-- Apply assumed uptime multiplier (pessimistic linear; spec §3.3 step 3)
-- Two-sided capital_locked = size × (max(bid,5c) + max(1-ask,5c))
-- max_size_by_capital uses the actual two-sided cost (spec bug fixed —
-  spec's `max(mid, 1-mid)` denominator under-estimates capital for wide spreads)
-- Share hard-capped at 0.25 — old proxy is still here temporarily but the
-  cap prevents the "thin book = 98% share" hallucination
-- Magnitude sanity gate: ev_per_day > 5% of capital_locked → ANOMALY
-- Risk caps wired from risk.py
-- Volume gate: volume_24h must be > MIN_VOLUME_24H
+Phase A (commit 79299a7): two-sided capital, discount, uptime, share hardcap,
+volume gate, magnitude/anomaly gate, Decision enum.
 
-Explicitly NOT in Phase A: info_velocity, category×velocity share model,
-spread_capture / adverse_selection / fees terms, uncertainty bounds, WATCH
-decision, account-state gates, correlation grouping, empirical calibration.
+Phase B (commit bc81f6e): replace share hardcap with category × velocity
+estimate (`estimate_share`); structural gate "wide spread + HIGH velocity =
+adverse selection trap"; thread velocity tags from `intel.velocity`.
+
+Phase C (this commit, per EV_FORMULA_v2_SPEC.md §3.3 steps 7-9 + §3.5 + §4):
+- spread_capture_per_day = expected_fills × quote_width
+- adverse_selection_per_day = expected_fills × adverse_per_fill[velocity]
+- fees_per_day = expected_fills × taker_fill_rate × (fee_rate × mid × (1-mid))
+- expected_fills_per_day = min(volume_24h × share, 2 × effective_size)
+- Uncertainty bounds: ev_low (share halved, adverse doubled), ev_high (share
+  doubled to share cap, adverse halved). Per spec note: bounds adjust only
+  the two biggest unknowns (lip_rebate and adverse_selection); spread_capture
+  and fees stay at mid values for sensitivity-analysis cleanliness.
+- Decision.WATCH: mid-case positive but ev_low negative — needs human review.
+
+Known modeling weakness (called out in Phase C scoping with user):
+spread_capture and adverse_selection are modeled as independent of each
+other. In reality spread capture requires a round trip (both sides fill);
+adverse selection happens on a one-sided fill where the next move is against
+us. The spec's approximation treats both as `fill_rate × magnitude` —
+roughly OK at low fill rates, gets sloppy at high fill rates. Refine once
+we have realized fill data.
 """
 
 from __future__ import annotations
@@ -34,7 +43,8 @@ from kalshi_ws.intel.velocity import Confidence, Velocity
 class Decision(StrEnum):
     """Per-market output of `evaluate`. See module docstring + spec §4."""
 
-    PLAY = "PLAY"  # passed all gates including magnitude
+    PLAY = "PLAY"  # all gates passed; ev_low also positive
+    WATCH = "WATCH"  # mid-case positive but low bound negative — needs review
     SKIP = "SKIP"  # failed a gate; not worth attention
     ANOMALY = "ANOMALY"  # math output is implausible; investigate before any action
 
@@ -80,9 +90,40 @@ class GateParams:
     max_capital: float = float(risk.PER_MARKET_MAX_POSITION_USD)
     magnitude_ceiling_pct: float = 0.05  # ev_per_day above 5% of cap → ANOMALY
     assumed_uptime: float = 0.80  # pessimistic; we won't be on 24/7
+    # Phase C: spread capture + fees
+    quote_width_dollars: float = 0.02  # we quote 2c inside reference
+    taker_fill_rate: float = 0.30  # fraction of fills needing active flattening
+    fee_rate: float = 0.07  # Kalshi standard rate; applied to mid × (1-mid)
 
 
 DEFAULT_GATE = GateParams()
+
+
+# Velocity → expected adverse-selection cost per fill (dollars).
+# Pessimistic defaults from EV_FORMULA_v2_SPEC.md §3.3 step 8; replace with
+# empirical estimates once we have ≥20 fills per velocity bucket.
+_ADVERSE_PER_FILL: dict[Velocity, float] = {
+    Velocity.LOW: 0.005,  # 0.5c
+    Velocity.MEDIUM: 0.030,  # 3.0c
+    Velocity.HIGH: 0.100,  # 10.0c
+}
+
+
+@dataclass(frozen=True)
+class EvComponents:
+    """Per-day decomposition of ev_per_day (all dollars; positive = revenue).
+
+    `total` = lip_rebate + spread_capture - adverse_selection - fees - opp_cost.
+    Stored as fields rather than computed-on-read so EvResult is straight-
+    forwardly serializable.
+    """
+
+    lip_rebate: float
+    spread_capture: float
+    adverse_selection: float
+    fees: float
+    opp_cost: float
+    total: float
 
 
 @dataclass(frozen=True)
@@ -90,17 +131,23 @@ class EvResult:
     ticker: str
     decision: Decision
     reason: str
-    # Components (all populated for debugging; some may be 0 if gate fired early)
+    # Sizing
     effective_size: int
     capital_locked: float
     share: float
-    competitor_multiplier: float  # what estimate_share used; for audit/calibration
+    competitor_multiplier: float  # what estimate_share used; for audit
     discount_multiplier: float
     effective_period_reward: float  # dollars after discount + uptime
-    reward_per_day: float
-    opp_cost_per_day: float
-    ev_per_day: float
+    expected_fills_per_day: float
+    # Mid-case decomposition (each term in dollars/day)
+    components: EvComponents
+    ev_per_day: float  # alias for components.total; kept for back-compat
+    reward_per_day: float  # alias for components.lip_rebate; back-compat
+    opp_cost_per_day: float  # alias for components.opp_cost; back-compat
     ev_pct_of_capital: float
+    # Uncertainty bounds
+    ev_low: float
+    ev_high: float
     # Diagnostics
     spread: float
     mid: float
@@ -166,7 +213,6 @@ def estimate_share(
     arrives, this is the lever we adjust.
     """
     base_mult = _COMPETITOR_MULTIPLIER.get((category, info_velocity), _DEFAULT_MULTIPLIER)
-    # Volume adjustment: thin flow = less competition, but don't reward heavily.
     if volume_24h < 20:
         mult = base_mult * 0.7
     elif volume_24h > 500:
@@ -180,6 +226,73 @@ def estimate_share(
         else 0.0
     )
     return min(raw_share, _SHARE_CAP), mult
+
+
+def _compute_components(
+    *,
+    share: float,
+    effective_period_reward: float,
+    days_remaining: float,
+    volume_24h: int,
+    effective_size: int,
+    mid: float,
+    capital_locked: float,
+    info_velocity: Velocity,
+    gate: GateParams,
+) -> tuple[EvComponents, float]:
+    """Mid-case full decomposition. Returns (components, expected_fills_per_day).
+
+    expected_fills is returned separately because it's a diagnostic the
+    dashboard shows, not part of the EV breakdown itself.
+    """
+    expected_fills_per_day = min(volume_24h * share, 2.0 * effective_size)
+
+    lip_rebate = (
+        (effective_period_reward / days_remaining) * share
+        if days_remaining > 0
+        else 0.0
+    )
+    spread_capture = expected_fills_per_day * gate.quote_width_dollars
+    adverse_per_fill = _ADVERSE_PER_FILL.get(info_velocity, _ADVERSE_PER_FILL[Velocity.HIGH])
+    adverse_selection = expected_fills_per_day * adverse_per_fill
+    fee_per_contract = gate.fee_rate * mid * (1.0 - mid)
+    fees = expected_fills_per_day * gate.taker_fill_rate * fee_per_contract
+    opp_cost = capital_locked * gate.annual_hurdle / 365.0
+
+    total = lip_rebate + spread_capture - adverse_selection - fees - opp_cost
+    return (
+        EvComponents(
+            lip_rebate=lip_rebate,
+            spread_capture=spread_capture,
+            adverse_selection=adverse_selection,
+            fees=fees,
+            opp_cost=opp_cost,
+            total=total,
+        ),
+        expected_fills_per_day,
+    )
+
+
+def _bound_adjustment(
+    mid_components: EvComponents,
+    *,
+    share_factor: float,
+    adverse_factor: float,
+) -> float:
+    """Compute the perturbed total per spec §3.5.
+
+    Bounds adjust ONLY lip_rebate and adverse_selection (the two biggest
+    unknowns); spread_capture, fees, and opp_cost stay at mid values. This
+    is a sensitivity analysis on the dominant uncertainties, not a full
+    counterfactual recomputation.
+    """
+    return (
+        mid_components.lip_rebate * share_factor
+        + mid_components.spread_capture
+        - mid_components.adverse_selection * adverse_factor
+        - mid_components.fees
+        - mid_components.opp_cost
+    )
 
 
 def evaluate(
@@ -216,14 +329,30 @@ def evaluate(
         effective_size=effective_size,
     )
 
-    reward_per_day = (
-        (effective_period_reward / days_remaining) * share
-        if days_remaining > 0
-        else 0.0
+    components, expected_fills = _compute_components(
+        share=share,
+        effective_period_reward=effective_period_reward,
+        days_remaining=days_remaining,
+        volume_24h=market.volume_24h,
+        effective_size=effective_size,
+        mid=mid,
+        capital_locked=capital_locked,
+        info_velocity=market.info_velocity,
+        gate=gate,
     )
-    opp_cost_per_day = capital_locked * gate.annual_hurdle / 365.0
-    ev_per_day = reward_per_day - opp_cost_per_day
+    ev_per_day = components.total
     ev_pct_of_capital = ev_per_day / capital_locked if capital_locked > 0 else 0.0
+
+    # Uncertainty bounds (spec §3.5)
+    ev_low = _bound_adjustment(components, share_factor=0.5, adverse_factor=2.0)
+    # High case: share doubles, but already-capped at 0.25 means the actual
+    # multiplier is min(2.0, 0.25 / share) when share > 0.
+    high_share_factor = (
+        min(2.0, _SHARE_CAP / share) if share > 0 else 1.0
+    )
+    ev_high = _bound_adjustment(
+        components, share_factor=high_share_factor, adverse_factor=0.5
+    )
 
     decision, reason = _gate(
         market=market,
@@ -233,6 +362,7 @@ def evaluate(
         capital_locked=capital_locked,
         ev_per_day=ev_per_day,
         ev_pct_of_capital=ev_pct_of_capital,
+        ev_low=ev_low,
         gate=gate,
     )
 
@@ -246,10 +376,14 @@ def evaluate(
         competitor_multiplier=competitor_multiplier,
         discount_multiplier=discount_multiplier,
         effective_period_reward=effective_period_reward,
-        reward_per_day=reward_per_day,
-        opp_cost_per_day=opp_cost_per_day,
+        expected_fills_per_day=expected_fills,
+        components=components,
         ev_per_day=ev_per_day,
+        reward_per_day=components.lip_rebate,
+        opp_cost_per_day=components.opp_cost,
         ev_pct_of_capital=ev_pct_of_capital,
+        ev_low=ev_low,
+        ev_high=ev_high,
         spread=spread,
         mid=mid,
         days_remaining=days_remaining,
@@ -267,13 +401,13 @@ def _gate(
     capital_locked: float,
     ev_per_day: float,
     ev_pct_of_capital: float,
+    ev_low: float,
     gate: GateParams,
 ) -> tuple[Decision, str]:
-    """Gate order: data quality → structural → risk → magnitude → EV floor.
+    """Gate order: data quality → structural → risk → magnitude → EV floor → bounds.
 
-    First failing rejects. Magnitude sanity gate runs AFTER all positive
-    gates pass and overrides PLAY — bugs in the formula should never deploy
-    capital.
+    First failing rejects with SKIP. Magnitude anomaly overrides PLAY. WATCH
+    fires when mid-case clears but low bound is negative — operator decides.
     """
     # Data quality
     if market.status != "active":
@@ -301,7 +435,6 @@ def _gate(
     if effective_size <= 0:
         return Decision.SKIP, "effective_size=0 (capital cap binds at 0)"
     if capital_locked > gate.max_capital:
-        # Should be rare since we already bounded size by capital, but check.
         return Decision.SKIP, f"capital_locked>${gate.max_capital:.0f}"
 
     # Magnitude sanity — anomaly overrides everything below
@@ -315,5 +448,12 @@ def _gate(
     # EV floor
     if ev_per_day < gate.min_ev_per_day:
         return Decision.SKIP, f"ev_per_day<${gate.min_ev_per_day:.2f}"
+
+    # Uncertainty bound — WATCH if mid is positive but low case goes negative
+    if ev_low < 0:
+        return Decision.WATCH, (
+            f"ev_per_day=${ev_per_day:.2f} positive but ev_low=${ev_low:.2f} "
+            "negative — share/adverse uncertainty too wide to play"
+        )
 
     return Decision.PLAY, "play"

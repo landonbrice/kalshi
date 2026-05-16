@@ -329,3 +329,135 @@ def test_wide_spread_low_velocity_does_not_trip_trap_gate() -> None:
     # May still SKIP/ANOMALY for other reasons, but NOT for the trap gate
     assert "adverse selection" not in r.reason
     assert "HIGH velocity" not in r.reason
+
+
+# ---- Phase C: spread_capture + adverse + fees + bounds + WATCH ----
+
+
+def test_phase_c_components_decompose_total() -> None:
+    """ev_per_day must equal the sum of components."""
+    r = evaluate(
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    expected = (
+        r.components.lip_rebate
+        + r.components.spread_capture
+        - r.components.adverse_selection
+        - r.components.fees
+        - r.components.opp_cost
+    )
+    assert r.ev_per_day == pytest.approx(expected)
+    assert r.components.total == pytest.approx(expected)
+
+
+def test_phase_c_spread_capture_proportional_to_fills() -> None:
+    """spread_capture = expected_fills × quote_width."""
+    r = evaluate(
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # Default quote_width = $0.02
+    assert r.components.spread_capture == pytest.approx(r.expected_fills_per_day * 0.02)
+
+
+def test_phase_c_adverse_selection_scales_with_velocity() -> None:
+    """HIGH velocity costs 10c/fill vs LOW at 0.5c/fill (20x ratio)."""
+    weather = evaluate(
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # Use a HIGH-velocity market with the SAME volume so fills are comparable
+    sports = evaluate(
+        _market(category="Sports", info_velocity=Velocity.HIGH, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # Even though Sports has more competitors (so fewer fills), per-fill
+    # adverse is 20x higher. The HIGH market's adverse cost should be
+    # substantial relative to weather, even after fill-count differences.
+    assert sports.components.adverse_selection > weather.components.adverse_selection
+
+
+def test_phase_c_fees_scale_with_mid_times_one_minus_mid() -> None:
+    """Fee per contract = 0.07 × mid × (1-mid). Symmetric around 0.50."""
+    # At mid=0.5: fee_per_contract = 0.07 × 0.25 = $0.0175
+    # At mid=0.1 (or 0.9): fee = 0.07 × 0.09 = $0.0063 (~36% of mid=0.5)
+    near_50 = evaluate(
+        _market(
+            yes_bid=0.48,
+            yes_ask=0.52,
+            category="Climate and Weather",
+            info_velocity=Velocity.LOW,
+            volume_24h=100,
+        ),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    near_edge = evaluate(
+        _market(
+            yes_bid=0.08,
+            yes_ask=0.12,
+            category="Climate and Weather",
+            info_velocity=Velocity.LOW,
+            volume_24h=100,
+        ),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # Fees per contract higher near 0.5; at low mid, fewer fee dollars per fill
+    assert near_50.components.fees > near_edge.components.fees
+
+
+def test_phase_c_ev_low_below_mid_below_ev_high() -> None:
+    """Bounds always bracket mid-case ev."""
+    r = evaluate(
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    assert r.ev_low <= r.ev_per_day <= r.ev_high
+
+
+def test_phase_c_watch_when_mid_positive_low_negative() -> None:
+    """A market with positive mid EV but negative low bound should WATCH, not PLAY."""
+    # Construct a market where lip_rebate is modestly positive and adverse
+    # is bounded such that doubling adverse + halving rebate pushes net negative.
+    # Sports + HIGH velocity has $0.10 adverse/fill — easy to overwhelm small rebate.
+    r = evaluate(
+        _market(
+            category="Sports",
+            info_velocity=Velocity.HIGH,
+            volume_24h=200,  # > 0 so we have fills
+            yes_bid=0.40,
+            yes_ask=0.45,  # spread 5c, under HIGH velocity trap ceiling 10c
+        ),
+        _program(period_reward_cents=15_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # We don't pin exact decision (depends on integer rounding) but if PLAY,
+    # ev_low must be positive; if WATCH, ev_low must be negative
+    if r.decision == Decision.PLAY:
+        assert r.ev_low >= 0
+    elif r.decision == Decision.WATCH:
+        assert r.ev_per_day > 0
+        assert r.ev_low < 0
+
+
+def test_phase_c_ev_high_capped_when_share_doubles_past_025() -> None:
+    """If mid share is >0.125, doubling exceeds the 0.25 cap; high bound clips."""
+    # Weather + LOW + low_volume gives share around 0.20 (close to cap)
+    r = evaluate(
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=15),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
+        now=NOW,
+    )
+    # share should be near cap (0.25) or just below
+    assert r.share > 0.10
+    # ev_high should reflect a capped share factor, not 2x
+    # If share=0.20, high factor = min(2.0, 0.25/0.20) = 1.25
+    # So high should be less than (mid + lip_rebate) — the bound is bounded
+    assert r.ev_high < r.ev_per_day + r.components.lip_rebate

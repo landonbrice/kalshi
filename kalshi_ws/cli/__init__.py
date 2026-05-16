@@ -103,27 +103,37 @@ def scan_lip(
     write_candidates_csv(out, candidates)
 
     plays = [c for c in candidates if c.ev.decision.value == "PLAY"]
+    watches = [c for c in candidates if c.ev.decision.value == "WATCH"]
     anomalies = [c for c in candidates if c.ev.decision.value == "ANOMALY"]
-    skips = len(candidates) - len(plays) - len(anomalies)
+    skips = len(candidates) - len(plays) - len(watches) - len(anomalies)
     typer.echo(
         f"Scanned {len(candidates)} markets ({len(plays)} PLAY, "
-        f"{len(anomalies)} ANOMALY, {skips} SKIP). CSV -> {out}\n"
+        f"{len(watches)} WATCH, {len(anomalies)} ANOMALY, {skips} SKIP). "
+        f"CSV -> {out}\n"
     )
 
     if plays:
         typer.echo("=== PLAY ===")
         typer.echo(
-            f"{'#':>3}  {'EV/day':>7}  {'ev%cap':>6}  {'reward':>7}  "
+            f"{'#':>3}  {'EV/day':>7}  {'ev_low':>7}  {'ev_high':>7}  "
             f"{'share':>5}  {'cap$':>5}  {'days':>4}  {'sprd':>4}  ticker | title"
         )
         for i, c in enumerate(plays[:top], 1):
             typer.echo(
                 f"{i:>3}  ${c.ev.ev_per_day:>6.2f}  "
-                f"{c.ev.ev_pct_of_capital * 100:>5.1f}%  "
-                f"${c.ev.reward_per_day:>6.2f}  "
+                f"${c.ev.ev_low:>6.2f}  ${c.ev.ev_high:>6.2f}  "
                 f"{c.ev.share:>5.2f}  ${c.ev.capital_locked:>4.0f}  "
                 f"{c.ev.days_remaining:>4.1f}  {c.ev.spread:>4.2f}  "
                 f"{c.market.ticker} | {c.market.title[:60]}"
+            )
+
+    if watches:
+        typer.echo("\n=== WATCH (mid EV positive but low bound negative — human review) ===")
+        for c in watches[:top]:
+            typer.echo(
+                f"  ${c.ev.ev_per_day:>6.2f}/day (low ${c.ev.ev_low:>6.2f}, "
+                f"high ${c.ev.ev_high:>6.2f})  {c.market.ticker} | "
+                f"{c.market.title[:60]}"
             )
 
     if anomalies:
@@ -135,8 +145,8 @@ def scan_lip(
                 f"{c.market.ticker} | {c.ev.reason}"
             )
 
-    if not plays and not anomalies:
-        typer.echo("No PLAY or ANOMALY candidates at current thresholds.")
+    if not plays and not watches and not anomalies:
+        typer.echo("No PLAY / WATCH / ANOMALY candidates at current thresholds.")
 
 
 def _write_meta(

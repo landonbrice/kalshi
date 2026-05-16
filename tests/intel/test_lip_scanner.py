@@ -226,7 +226,7 @@ def test_scan_end_to_end_with_mocked_api(settings: Settings) -> None:
 
 def test_csv_writer_round_trip(tmp_path: Path) -> None:
     """The CSV must be parseable and contain the headline EV fields."""
-    from kalshi_ws.intel.ev import Decision, EvResult, MarketSnapshot
+    from kalshi_ws.intel.ev import Decision, EvComponents, EvResult, MarketSnapshot
     from kalshi_ws.intel.ev import LipProgram as IntelLipProgram
     from kalshi_ws.intel.velocity import Confidence, SeriesTag, Velocity
 
@@ -267,10 +267,21 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
             competitor_multiplier=8.0,
             discount_multiplier=0.5,
             effective_period_reward=1000.0,
+            expected_fills_per_day=20.0,
+            components=EvComponents(
+                lip_rebate=6.66,
+                spread_capture=0.40,
+                adverse_selection=0.30,
+                fees=0.05,
+                opp_cost=0.013,
+                total=6.65,
+            ),
+            ev_per_day=6.65,
             reward_per_day=6.66,
             opp_cost_per_day=0.013,
-            ev_per_day=6.65,
             ev_pct_of_capital=0.14,
+            ev_low=2.0,
+            ev_high=10.0,
             spread=0.05,
             mid=0.425,
             days_remaining=30.0,
