@@ -7,13 +7,16 @@ from kalshi_ws.intel.ev import (
     GateParams,
     LipProgram,
     MarketSnapshot,
+    estimate_share,
     evaluate,
 )
+from kalshi_ws.intel.velocity import Velocity
 
 NOW = datetime(2026, 5, 15, 12, 0, tzinfo=UTC)
 
 
 def _market(**overrides: object) -> MarketSnapshot:
+    """Default test market: Weather + LOW velocity (the favorable case)."""
     base = {
         "ticker": "TEST-1",
         "yes_bid": 0.40,
@@ -22,6 +25,8 @@ def _market(**overrides: object) -> MarketSnapshot:
         "top_yes_size": 0.0,
         "top_no_size": 0.0,
         "volume_24h": 100,
+        "category": "Climate and Weather",
+        "info_velocity": Velocity.LOW,
     }
     base.update(overrides)
     return MarketSnapshot(**base)  # type: ignore[arg-type]
@@ -89,22 +94,81 @@ def test_uptime_multiplier_applied() -> None:
     assert r.effective_period_reward == pytest.approx(2000.0)
 
 
-def test_share_hard_capped_at_25_pct() -> None:
-    """The v1 thin-book hallucination must be ceiling'd. Spec §A.6."""
-    # Empty book → old proxy says share=1.0
-    r = evaluate(_market(top_yes_size=0, top_no_size=0), _program(), now=NOW)
-    assert r.share == pytest.approx(0.25)
+def test_estimate_share_weather_low_volume_thin_book() -> None:
+    """Weather + LOW + low_volume bucket: multiplier 2.0 × 0.7 = 1.4.
 
-
-def test_share_below_cap_uses_proxy() -> None:
-    """Phase A keeps v1's proxy active below the cap (it's only wrong at thin-book extreme)."""
-    # top_of_book_avg = 1000, target=250 → proxy = 250/1250 = 0.20 < 0.25
-    r = evaluate(
-        _market(top_yes_size=1000, top_no_size=1000),
-        _program(),
-        now=NOW,
+    At target_size=250, effective_size=89: competitor_size = 250 × 1.4 = 350.
+    share = 89/(89+350) = 0.203. Below 0.25 cap.
+    """
+    share, mult = estimate_share(
+        category="Climate and Weather",
+        info_velocity=Velocity.LOW,
+        volume_24h=15,  # < 20 → ×0.7
+        target_size=250.0,
+        effective_size=89,
     )
-    assert r.share == pytest.approx(0.20)
+    assert mult == pytest.approx(1.4)
+    assert share == pytest.approx(89 / (89 + 350), rel=1e-3)
+
+
+def test_estimate_share_sports_high_high_volume_crowded() -> None:
+    """Sports + HIGH + high_volume: multiplier 10.0 × 1.5 = 15. Very thin share."""
+    share, mult = estimate_share(
+        category="Sports",
+        info_velocity=Velocity.HIGH,
+        volume_24h=1000,
+        target_size=250.0,
+        effective_size=89,
+    )
+    assert mult == pytest.approx(15.0)
+    # competitor_size = 3750, share = 89 / (89+3750) = 0.023
+    assert share == pytest.approx(89 / (89 + 3750), rel=1e-2)
+
+
+def test_estimate_share_hits_cap_at_extreme_thin() -> None:
+    """Even ridiculous parameters cap at 0.25 — we are never alone."""
+    share, _ = estimate_share(
+        category="Climate and Weather",
+        info_velocity=Velocity.LOW,
+        volume_24h=5,
+        target_size=10.0,
+        effective_size=500,  # absurd, would mathematically exceed cap
+    )
+    assert share == pytest.approx(0.25)
+
+
+def test_estimate_share_unknown_category_uses_default_multiplier() -> None:
+    """Categories not in the table fall through to multiplier 5.0."""
+    share, mult = estimate_share(
+        category="WeirdNewCategory",
+        info_velocity=Velocity.MEDIUM,
+        volume_24h=100,
+        target_size=100.0,
+        effective_size=50,
+    )
+    assert mult == pytest.approx(5.0)
+    # competitor_size = 500, share = 50/(50+500) = 0.091
+    assert share == pytest.approx(50 / 550, rel=1e-2)
+
+
+def test_evaluate_uses_estimate_share_via_market_velocity() -> None:
+    """The integrated evaluate() call should plumb velocity → share."""
+    weather = _market(
+        category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100
+    )
+    sports = _market(
+        category="Sports",
+        info_velocity=Velocity.HIGH,
+        yes_bid=0.40,
+        yes_ask=0.45,
+        volume_24h=100,
+    )
+    r_w = evaluate(weather, _program(), now=NOW)
+    r_s = evaluate(sports, _program(), now=NOW)
+    # Sports + HIGH multiplier 10.0 >> Weather + LOW multiplier 2.0
+    assert r_w.competitor_multiplier == pytest.approx(2.0)
+    assert r_s.competitor_multiplier == pytest.approx(10.0)
+    assert r_w.share > r_s.share
 
 
 # ---- Decision gates ----
@@ -177,24 +241,17 @@ def test_anomaly_overrides_play_when_math_blows_up() -> None:
 
 
 def test_play_when_within_realistic_envelope() -> None:
-    """A market that should pass: small reward, sane share, low return %."""
-    # period_reward $200, 30 days, share 0.20 → reward_per_day = $200/30 × 0.20 = $1.33
-    # Wait that's < $1 min_ev. Let me bump to make it pass cleanly.
-    # $1,500 pool, share capped 0.25, 30 days, uptime 0.80, no discount
-    # reward_per_day = $1500 × 0.80 / 30 × 0.25 = $10
-    # capital at size=50, bid=0.40, ask=0.45 → 50 × (0.40 + 0.55) = $47.50
-    # ev/cap = 10/47.5 = 21% → ANOMALY. Still too high.
-    # Need to lower share or raise capital.
-    # Smaller pool, smaller share, lower return %:
-    # $300 pool, share 0.20, uptime 0.80, 30 days → $300 × 0.80 / 30 × 0.20 = $1.60/day
-    # capital $47.50 → ev/cap = 3.4% < 5% ✓
+    """A market that should pass: weather + low velocity + modest pool."""
+    # Weather + LOW + volume=100 (no vol adjustment) → multiplier 2.0
+    # target=50, effective_size=50 → competitor=100 → share=50/150 = 0.333 → capped to 0.25
+    # $300 pool × 0.5 discount × 0.80 uptime / 30 days × 0.25 = $1.00/day
+    # capital at size=50 × (0.40+0.55) = $47.50 → ev/cap = 2.1% < 5% ✓
     r = evaluate(
-        _market(top_yes_size=1000, top_no_size=1000, volume_24h=500),
-        _program(period_reward_cents=30_000, discount_factor_bps=0),
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
         now=NOW,
     )
     assert r.decision == Decision.PLAY, f"expected PLAY, got {r.decision} ({r.reason})"
-    assert r.share == pytest.approx(0.20)  # proxy active
     assert r.ev_pct_of_capital <= 0.05
 
 
@@ -226,15 +283,49 @@ def test_custom_magnitude_ceiling_overrides_default() -> None:
     strict = GateParams(magnitude_ceiling_pct=0.01)
     # A market that PLAYs at 5% ceiling should ANOMALY at 1%
     r_loose = evaluate(
-        _market(top_yes_size=1000, top_no_size=1000, volume_24h=500),
-        _program(period_reward_cents=30_000, discount_factor_bps=0),
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
         now=NOW,
     )
     r_tight = evaluate(
-        _market(top_yes_size=1000, top_no_size=1000, volume_24h=500),
-        _program(period_reward_cents=30_000, discount_factor_bps=0),
+        _market(category="Climate and Weather", info_velocity=Velocity.LOW, volume_24h=100),
+        _program(period_reward_cents=30_000, target_size=50, discount_factor_bps=0),
         now=NOW,
         gate=strict,
     )
     assert r_loose.decision == Decision.PLAY
     assert r_tight.decision == Decision.ANOMALY
+
+
+def test_structural_gate_wide_spread_high_velocity_is_trap() -> None:
+    """The Drake-class catch: spread > 10c + HIGH velocity → SKIP before math runs."""
+    r = evaluate(
+        _market(
+            yes_bid=0.27,
+            yes_ask=0.71,  # spread = 0.44, well over 0.10
+            category="Entertainment",
+            info_velocity=Velocity.HIGH,
+        ),
+        _program(),
+        now=NOW,
+    )
+    assert r.decision == Decision.SKIP
+    assert "HIGH velocity" in r.reason or "adverse selection" in r.reason
+
+
+def test_wide_spread_low_velocity_does_not_trip_trap_gate() -> None:
+    """Same wide spread on LOW velocity (weather) is acceptable, not a trap."""
+    r = evaluate(
+        _market(
+            yes_bid=0.27,
+            yes_ask=0.71,
+            category="Climate and Weather",
+            info_velocity=Velocity.LOW,
+            volume_24h=100,
+        ),
+        _program(),
+        now=NOW,
+    )
+    # May still SKIP/ANOMALY for other reasons, but NOT for the trap gate
+    assert "adverse selection" not in r.reason
+    assert "HIGH velocity" not in r.reason

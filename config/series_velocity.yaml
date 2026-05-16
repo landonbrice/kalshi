@@ -1,0 +1,195 @@
+# Series velocity tagging — v0 bootstrap
+#
+# Source spec: INFO_VELOCITY_TAGGING.md
+# Feeds: kalshi_ws.intel.ev.estimate_share() + the spread × velocity gate.
+#
+# Schema:
+#   defaults:
+#     info_velocity: <low|medium|high>
+#     confidence: <low|medium|high>
+#   series:
+#     <SERIES_TICKER>:
+#       info_velocity: <low|medium|high>
+#       confidence: <low|medium|high>
+#       correlation_group: <string|null>   # static for v0 (no template resolver)
+#       notes: <free text>
+#
+# Untagged series fall through to `defaults`. Default is HIGH velocity / LOW
+# confidence — fail closed. Tag a series here to give it a real chance.
+#
+# v0 omits:
+#   - velocity_overrides (calendar conditions like hurricane season, FOMC) —
+#     accepted in schema if present but ignored by the resolver
+#   - correlation_group templates ({date}, {month}, {week}) — use static strings
+#
+# Both deferred to v1; see INFO_VELOCITY_TAGGING.md §5.
+
+defaults:
+  info_velocity: high
+  confidence: low
+
+series:
+
+  # ===== Weather (LOW) =====
+  # Workhorse for LIP MM. Single public source (NWS), info arrives on schedule,
+  # no shocks between releases.
+
+  KXHIGHNY:
+    info_velocity: low
+    confidence: high
+    correlation_group: nyc_weather
+    notes: "Central Park (KNYC). Pull orders by 14:00 ET."
+
+  KXHIGHCHI:
+    info_velocity: low
+    confidence: high
+    correlation_group: chi_weather
+    notes: "KORD. Pull by 15:00 CT."
+
+  KXHIGHMIA:
+    info_velocity: low
+    confidence: medium
+    correlation_group: mia_weather
+    notes: "Hurricane season caveat — Aug-Oct can produce 5c moves on track shifts. Bump to MEDIUM Aug-Oct manually until override resolver ships."
+
+  KXHIGHLAX:
+    info_velocity: low
+    confidence: high
+    correlation_group: lax_weather
+
+  KXHIGHDEN:
+    info_velocity: low
+    confidence: medium
+    correlation_group: den_weather
+    notes: "Front Range erratic in shoulder seasons; consider MEDIUM Mar-May, Oct-Nov."
+
+  KXHIGHAUS:
+    info_velocity: low
+    confidence: high
+    correlation_group: aus_weather
+
+  KXHIGHPHIL:
+    info_velocity: low
+    confidence: high
+    correlation_group: phi_weather
+
+  KXLOWNY:
+    info_velocity: low
+    confidence: high
+    correlation_group: nyc_weather
+    notes: "Same correlation group as KXHIGHNY (same weather system)."
+
+  KXSNOWNY:
+    info_velocity: low
+    confidence: high
+    correlation_group: nyc_snow
+    notes: "Monthly. Larger LIP pool typical; quote tighter."
+
+  KXRAINNYC:
+    info_velocity: low
+    confidence: high
+    correlation_group: nyc_rain
+
+  # ===== Crypto (MEDIUM) =====
+  # Continuous price discovery, generally orderly. Macro shocks (FOMC) are
+  # HIGH but rare — manually skip on FOMC days until override resolver ships.
+
+  KXBTCD:
+    info_velocity: medium
+    confidence: medium
+    correlation_group: btc
+    notes: "Daily Bitcoin close. Skip on FOMC days."
+
+  KXETHD:
+    info_velocity: medium
+    confidence: medium
+    correlation_group: eth
+    notes: "Correlated with BTC on news days."
+
+  KXBTCW:
+    info_velocity: medium
+    confidence: medium
+    correlation_group: btc_week
+    notes: "Weekly Bitcoin close. Long-dated; smaller pool but more reward/day potential."
+
+  # ===== Entertainment — RT Scores (HIGH) =====
+  # Embargo lifts unpredictable; single critic review can move 5c.
+
+  KXMOVIESCORE:
+    info_velocity: high
+    confidence: medium
+    correlation_group: rt_scores
+    notes: "No edge for us — pros live here. Default SKIP unless wide spread + far settlement."
+
+  # ===== Entertainment — Streaming Charts (HIGH) =====
+  # FlixPatrol leaks precede Netflix Tuesday release. We're the slow side.
+
+  KXNETFLIXTOP:
+    info_velocity: high
+    confidence: medium
+    correlation_group: netflix_top10
+    notes: "AVOID Saturday onward. Pre-Friday quoting only with hard pull rule."
+
+  KXTOPALBUM:
+    info_velocity: high
+    confidence: medium
+    correlation_group: billboard_album
+    notes: "Same pattern as Netflix — pre-Friday only."
+
+  KXSPOTIFYWRAP:
+    info_velocity: high
+    confidence: low
+    correlation_group: spotify_wrap
+    notes: "LOW during Q1-Q3 (no info), HIGH starting Oct. Manual override until resolver ships."
+
+  # ===== Entertainment — Awards (HIGH default; LOW far out) =====
+
+  KXOSCAR:
+    info_velocity: high
+    confidence: medium
+    correlation_group: oscars
+    notes: "Best Picture / Best Actor are pro-dense. Technical categories thinner. Manual MEDIUM if >60 days to ceremony."
+
+  # ===== Sports (HIGH, mostly excluded by maker fee) =====
+
+  KXMLBGAME:
+    info_velocity: high
+    confidence: medium
+    correlation_group: mlb_game
+    notes: "Operator has baseball-platform domain knowledge. Pre-game only (>=4h before first pitch); hard pull at lineup release."
+
+  # ===== Politics (HIGH) =====
+
+  KXPRES:
+    info_velocity: high
+    confidence: medium
+    correlation_group: pres
+    notes: "Default SKIP. Information asymmetry too high."
+
+  KXELECT:
+    info_velocity: high
+    confidence: medium
+    correlation_group: elections
+    notes: "Default SKIP."
+
+  # ===== Excluded series (recorded for clarity) =====
+  # These are gated out at the maker-fee level upstream; tagging them here
+  # makes the rejection reason discoverable in scan output.
+
+  KXNBA:
+    info_velocity: high
+    confidence: high
+    correlation_group: nba
+    notes: "Excluded: maker fee compresses LIP edge below adverse cost."
+
+  KXNFLGAME:
+    info_velocity: high
+    confidence: high
+    correlation_group: nfl_game
+    notes: "Excluded: maker fee."
+
+  KXFEDDECISION:
+    info_velocity: high
+    confidence: high
+    correlation_group: fed
+    notes: "Excluded: maker fee + macro shock risk."

@@ -28,6 +28,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from kalshi_ws import risk
+from kalshi_ws.intel.velocity import Confidence, Velocity
 
 
 class Decision(StrEnum):
@@ -46,9 +47,13 @@ class MarketSnapshot:
     yes_bid: float
     yes_ask: float
     status: str
-    top_yes_size: float  # diagnostic only in Phase A; old proxy still uses
-    top_no_size: float  # diagnostic only in Phase A; old proxy still uses
+    top_yes_size: float  # diagnostic only post-Phase-B
+    top_no_size: float  # diagnostic only post-Phase-B
     volume_24h: int  # contracts in last 24h; 0 = stale market
+    category: str = ""  # e.g. "Climate and Weather", "Entertainment"; "" if unknown
+    info_velocity: Velocity = Velocity.HIGH  # from velocity registry; HIGH if untagged
+    confidence: Confidence = Confidence.LOW  # diagnostic only; not in math (yet)
+    series_ticker: str = ""  # for correlation grouping; "" if unknown
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,7 @@ class GateParams:
     annual_hurdle: float = 0.10
     min_ev_per_day: float = 1.0
     min_spread: float = 0.02
+    max_spread_high_velocity: float = 0.10  # spread > 10c + HIGH velocity = trap
     min_days_remaining: float = 3.0
     min_volume_24h: int = 10
     max_capital: float = float(risk.PER_MARKET_MAX_POSITION_USD)
@@ -88,6 +94,7 @@ class EvResult:
     effective_size: int
     capital_locked: float
     share: float
+    competitor_multiplier: float  # what estimate_share used; for audit/calibration
     discount_multiplier: float
     effective_period_reward: float  # dollars after discount + uptime
     reward_per_day: float
@@ -98,6 +105,9 @@ class EvResult:
     spread: float
     mid: float
     days_remaining: float
+    # Velocity context (for audit + dashboard)
+    info_velocity: Velocity
+    confidence: Confidence
 
 
 def _max_size_by_capital(
@@ -116,17 +126,60 @@ def _max_size_by_capital(
     return int(max_capital // per_unit_capital)
 
 
-def _compute_share_capped(
-    target_size: float, top_yes_size: float, top_no_size: float, cap: float
-) -> float:
-    """Phase A: keep v1's broken proxy but enforce a hard ceiling.
+# Category × velocity → assumed competitor density in multiples of target_size.
+# Pessimistic defaults from EV_FORMULA_v2_SPEC.md §3.4 + INFO_VELOCITY_TAGGING.md.
+# Categories use Kalshi's actual category strings (case-sensitive).
+_COMPETITOR_MULTIPLIER: dict[tuple[str, Velocity], float] = {
+    ("Climate and Weather", Velocity.LOW): 2.0,
+    ("Climate and Weather", Velocity.MEDIUM): 3.0,
+    ("Climate and Weather", Velocity.HIGH): 6.0,
+    ("Economics", Velocity.LOW): 3.0,
+    ("Economics", Velocity.MEDIUM): 5.0,
+    ("Economics", Velocity.HIGH): 8.0,
+    ("Entertainment", Velocity.LOW): 4.0,
+    ("Entertainment", Velocity.MEDIUM): 5.0,
+    ("Entertainment", Velocity.HIGH): 8.0,
+    ("Sports", Velocity.HIGH): 10.0,
+    ("Sports", Velocity.MEDIUM): 6.0,
+    ("Crypto", Velocity.MEDIUM): 6.0,
+    ("Crypto", Velocity.HIGH): 10.0,
+    ("Politics", Velocity.HIGH): 8.0,
+    ("Elections", Velocity.HIGH): 8.0,
+    ("Companies", Velocity.MEDIUM): 5.0,
+    ("Companies", Velocity.HIGH): 8.0,
+}
+_DEFAULT_MULTIPLIER = 5.0
+_SHARE_CAP = 0.25  # we are never alone — even at very thin books
 
-    Phase B (separate spec) replaces this with category × info_velocity.
+
+def estimate_share(
+    category: str,
+    info_velocity: Velocity,
+    volume_24h: int,
+    target_size: float,
+    effective_size: int,
+) -> tuple[float, float]:
+    """Pessimistic share estimate, segmented by category × velocity.
+
+    Returns `(share, competitor_multiplier_used)` for audit. The multiplier
+    is exposed because it's the dominant assumption — when calibration data
+    arrives, this is the lever we adjust.
     """
-    competitor_size = (top_yes_size + top_no_size) / 2
-    denom = target_size + competitor_size
-    raw = target_size / denom if denom > 0 else 1.0
-    return min(raw, cap)
+    base_mult = _COMPETITOR_MULTIPLIER.get((category, info_velocity), _DEFAULT_MULTIPLIER)
+    # Volume adjustment: thin flow = less competition, but don't reward heavily.
+    if volume_24h < 20:
+        mult = base_mult * 0.7
+    elif volume_24h > 500:
+        mult = base_mult * 1.5
+    else:
+        mult = base_mult
+    competitor_size = target_size * mult
+    raw_share = (
+        effective_size / (effective_size + competitor_size)
+        if (effective_size + competitor_size) > 0
+        else 0.0
+    )
+    return min(raw_share, _SHARE_CAP), mult
 
 
 def evaluate(
@@ -155,8 +208,12 @@ def evaluate(
         * gate.assumed_uptime
     )
 
-    share = _compute_share_capped(
-        program.target_size, market.top_yes_size, market.top_no_size, cap=0.25
+    share, competitor_multiplier = estimate_share(
+        category=market.category,
+        info_velocity=market.info_velocity,
+        volume_24h=market.volume_24h,
+        target_size=program.target_size,
+        effective_size=effective_size,
     )
 
     reward_per_day = (
@@ -186,6 +243,7 @@ def evaluate(
         effective_size=effective_size,
         capital_locked=capital_locked,
         share=share,
+        competitor_multiplier=competitor_multiplier,
         discount_multiplier=discount_multiplier,
         effective_period_reward=effective_period_reward,
         reward_per_day=reward_per_day,
@@ -195,6 +253,8 @@ def evaluate(
         spread=spread,
         mid=mid,
         days_remaining=days_remaining,
+        info_velocity=market.info_velocity,
+        confidence=market.confidence,
     )
 
 
@@ -226,6 +286,14 @@ def _gate(
     # Structural
     if spread < gate.min_spread:
         return Decision.SKIP, f"spread<{gate.min_spread:.2f}"
+    if (
+        spread > gate.max_spread_high_velocity
+        and market.info_velocity == Velocity.HIGH
+    ):
+        return Decision.SKIP, (
+            f"spread>{gate.max_spread_high_velocity:.2f} + HIGH velocity "
+            "(adverse selection trap)"
+        )
     if days_remaining < gate.min_days_remaining:
         return Decision.SKIP, f"days_remaining<{gate.min_days_remaining:.0f}"
 

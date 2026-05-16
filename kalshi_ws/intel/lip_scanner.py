@@ -27,6 +27,19 @@ from kalshi_ws.intel.ev import (
     MarketSnapshot,
     evaluate,
 )
+from kalshi_ws.intel.velocity import (
+    SeriesTag,
+    VelocityRegistry,
+    get_default_registry,
+)
+
+
+@dataclass(frozen=True)
+class EventMeta:
+    """What we extract from a /events/{ticker} lookup."""
+
+    category: str
+    series_ticker: str
 
 
 @dataclass(frozen=True)
@@ -36,6 +49,8 @@ class LipCandidate:
     market: Market
     program: IncentiveProgram
     category: str
+    series_ticker: str
+    velocity_tag: SeriesTag
     snapshot: MarketSnapshot
     ev: EvResult
 
@@ -47,13 +62,16 @@ async def scan_lip_candidates(
     gate: GateParams = DEFAULT_GATE,
     concurrent_orderbooks: int = 10,
     now: datetime | None = None,
+    velocity_registry: VelocityRegistry | None = None,
 ) -> list[LipCandidate]:
     """Return LIP candidates ranked by EV/day desc.
 
-    Includes both PLAY and PASS rows so the operator can see why each was gated.
-    Filter to `c.ev.play` for the actionable shortlist.
+    Includes PLAY / SKIP / ANOMALY rows so the operator can audit the gating.
+    `velocity_registry` defaults to the cached `config/series_velocity.yaml`
+    load; tests inject a fixture.
     """
     now = now or datetime.now(UTC)
+    registry = velocity_registry or get_default_registry()
 
     programs = await client.list_incentive_programs(
         incentive_type="liquidity", status="active"
@@ -64,23 +82,28 @@ async def scan_lip_candidates(
     market_by_ticker = {m.ticker: m for m in markets}
 
     event_tickers = {m.event_ticker for m in markets if m.event_ticker}
-    categories = await _fetch_event_categories(client, event_tickers)
+    event_meta = await _fetch_event_meta(client, event_tickers)
 
-    pre_filtered: list[tuple[Market, IncentiveProgram, str]] = []
+    pre_filtered: list[tuple[Market, IncentiveProgram, EventMeta]] = []
     for t in tickers:
         m = market_by_ticker.get(t)
         p = program_by_ticker.get(t)
         if m is None or p is None:
             continue
-        cat = categories.get(m.event_ticker or "", "")
-        if category_filter and cat != category_filter:
+        meta = event_meta.get(m.event_ticker or "", EventMeta(category="", series_ticker=""))
+        if category_filter and meta.category != category_filter:
             continue
         if not _passes_cheap_gates(m, p, gate, now):
             continue
-        pre_filtered.append((m, p, cat))
+        pre_filtered.append((m, p, meta))
 
     candidates = await _score_with_orderbooks(
-        client, pre_filtered, gate=gate, now=now, concurrency=concurrent_orderbooks
+        client,
+        pre_filtered,
+        gate=gate,
+        now=now,
+        concurrency=concurrent_orderbooks,
+        registry=registry,
     )
     candidates.sort(key=lambda c: c.ev.ev_per_day, reverse=True)
     return candidates
@@ -109,24 +132,24 @@ def _passes_cheap_gates(
     return days >= gate.min_days_remaining
 
 
-async def _fetch_event_categories(
+async def _fetch_event_meta(
     client: KalshiReadClient,
     event_tickers: Iterable[str],
     *,
     concurrency: int = 4,
-) -> dict[str, str]:
-    """Look up `event.category` for each event ticker.
+) -> dict[str, EventMeta]:
+    """Look up `event.category` AND `event.series_ticker` for each event ticker.
 
     Concurrency is intentionally low: empirically Kalshi rate-limits the
     /events endpoint when fanning out 20+ concurrent requests, returning 429
     (which raise_for_status surfaces). Failed lookups fall back to empty
-    string so the scanner can still rank by EV; the dashboard treats missing
-    category as "uncategorized".
+    strings so the scanner can still rank — series_ticker="" means the
+    velocity registry will return its default (HIGH) tag.
     """
     tickers = list(event_tickers)
     sem = asyncio.Semaphore(concurrency)
 
-    async def one(et: str) -> tuple[str, str]:
+    async def one(et: str) -> tuple[str, EventMeta]:
         url = f"{client._settings.base_url}/events/{et}"  # noqa: SLF001
         async with sem:
             headers = signed_headers(
@@ -138,10 +161,13 @@ async def _fetch_event_categories(
             try:
                 r = await client._client.get(url, headers=headers)  # noqa: SLF001
                 r.raise_for_status()
-                body = r.json()
-                return et, (body.get("event") or {}).get("category") or ""
+                ev = (r.json().get("event") or {})
+                return et, EventMeta(
+                    category=ev.get("category") or "",
+                    series_ticker=ev.get("series_ticker") or "",
+                )
             except Exception:
-                return et, ""
+                return et, EventMeta(category="", series_ticker="")
 
     results = await asyncio.gather(*(one(et) for et in tickers))
     return dict(results)
@@ -149,22 +175,24 @@ async def _fetch_event_categories(
 
 async def _score_with_orderbooks(
     client: KalshiReadClient,
-    candidates: list[tuple[Market, IncentiveProgram, str]],
+    candidates: list[tuple[Market, IncentiveProgram, EventMeta]],
     *,
     gate: GateParams,
     now: datetime,
     concurrency: int,
+    registry: VelocityRegistry,
 ) -> list[LipCandidate]:
     sem = asyncio.Semaphore(concurrency)
 
     async def score(
-        m: Market, p: IncentiveProgram, cat: str
+        m: Market, p: IncentiveProgram, meta: EventMeta
     ) -> LipCandidate | None:
         async with sem:
             try:
                 ob = await client.get_orderbook(m.ticker)
             except Exception:
                 return None
+        tag = registry.lookup(meta.series_ticker or None)
         snap = MarketSnapshot(
             ticker=m.ticker,
             yes_bid=m.yes_bid / 100.0,
@@ -173,6 +201,10 @@ async def _score_with_orderbooks(
             top_yes_size=ob.top_yes_size(),
             top_no_size=ob.top_no_size(),
             volume_24h=m.volume_24h,
+            category=meta.category,
+            info_velocity=tag.info_velocity,
+            confidence=tag.confidence,
+            series_ticker=meta.series_ticker,
         )
         prog = LipProgram(
             market_ticker=p.market_ticker,
@@ -182,9 +214,17 @@ async def _score_with_orderbooks(
             discount_factor_bps=p.discount_factor_bps,
         )
         ev = evaluate(snap, prog, now=now, gate=gate)
-        return LipCandidate(market=m, program=p, category=cat, snapshot=snap, ev=ev)
+        return LipCandidate(
+            market=m,
+            program=p,
+            category=meta.category,
+            series_ticker=meta.series_ticker,
+            velocity_tag=tag,
+            snapshot=snap,
+            ev=ev,
+        )
 
-    raw = await asyncio.gather(*(score(m, p, c) for m, p, c in candidates))
+    raw = await asyncio.gather(*(score(m, p, meta) for m, p, meta in candidates))
     return [c for c in raw if c is not None]
 
 
@@ -201,7 +241,12 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
         "ticker",
         "title",
         "category",
-        "decision",  # Phase A: PLAY / SKIP / ANOMALY
+        "series_ticker",
+        "info_velocity",
+        "confidence",
+        "velocity_is_default",
+        "correlation_group",
+        "decision",  # PLAY / SKIP / ANOMALY
         "play",  # back-compat bool for dashboard agent (decision == PLAY)
         "reason",
         "ev_per_day",
@@ -210,6 +255,7 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
         "effective_period_reward",
         "discount_multiplier",
         "share",
+        "competitor_multiplier",
         "effective_size",
         "opp_cost_per_day",
         "capital_locked",
@@ -235,6 +281,11 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
                     "ticker": c.market.ticker,
                     "title": c.market.title,
                     "category": c.category,
+                    "series_ticker": c.series_ticker,
+                    "info_velocity": c.ev.info_velocity.value,
+                    "confidence": c.ev.confidence.value,
+                    "velocity_is_default": c.velocity_tag.is_default,
+                    "correlation_group": c.velocity_tag.correlation_group or "",
                     "decision": c.ev.decision.value,
                     "play": c.ev.decision.value == "PLAY",
                     "reason": c.ev.reason,
@@ -244,6 +295,7 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
                     "effective_period_reward": f"{c.ev.effective_period_reward:.2f}",
                     "discount_multiplier": f"{c.ev.discount_multiplier:.2f}",
                     "share": f"{c.ev.share:.4f}",
+                    "competitor_multiplier": f"{c.ev.competitor_multiplier:.2f}",
                     "effective_size": c.ev.effective_size,
                     "opp_cost_per_day": f"{c.ev.opp_cost_per_day:.4f}",
                     "capital_locked": f"{c.ev.capital_locked:.4f}",

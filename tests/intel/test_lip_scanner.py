@@ -155,6 +155,7 @@ def test_scan_end_to_end_with_mocked_api(settings: Settings) -> None:
                             "status": "active",
                             "yes_bid": 40,
                             "yes_ask": 45,
+                            "volume_24h": 100,
                             "event_ticker": "EV-B",
                         },
                     ],
@@ -162,9 +163,25 @@ def test_scan_end_to_end_with_mocked_api(settings: Settings) -> None:
                 },
             )
         if "/events/EV-A" in p:
-            return httpx.Response(200, json={"event": {"category": "Entertainment"}})
+            return httpx.Response(
+                200,
+                json={
+                    "event": {
+                        "category": "Entertainment",
+                        "series_ticker": "KX-ENT-SERIES",
+                    }
+                },
+            )
         if "/events/EV-B" in p:
-            return httpx.Response(200, json={"event": {"category": "Sports"}})
+            return httpx.Response(
+                200,
+                json={
+                    "event": {
+                        "category": "Sports",
+                        "series_ticker": "KX-SPORT-SERIES",
+                    }
+                },
+            )
         if p.endswith("/orderbook"):
             return httpx.Response(
                 200,
@@ -195,24 +212,38 @@ def test_scan_end_to_end_with_mocked_api(settings: Settings) -> None:
     c = candidates[0]
     assert c.market.ticker == "KX-A"
     assert c.category == "Entertainment"
-    # Phase A: the v1-proxy share at top=10/target=250 = 0.96 is capped to 0.25.
-    # With the $50 capital cap, this market gets ANOMALY: huge pool ($250k cents)
-    # × discount(0.5) × uptime(0.8) / 30 days × share(0.25) ≈ $8.3/day on tiny cap.
-    # Either PLAY or ANOMALY is acceptable depending on exact numbers; just
-    # confirm we got a decision and the share cap fired.
-    assert c.ev.decision.value in {"PLAY", "ANOMALY"}
-    assert c.ev.share == pytest.approx(0.25)
+    assert c.series_ticker == "KX-ENT-SERIES"
+    # Untagged series falls through to default HIGH velocity
+    assert c.velocity_tag.is_default is True
+    assert c.ev.info_velocity.value == "high"
+    # Entertainment + HIGH → competitor_multiplier base 8.0
+    # volume_24h=100 → no vol adjustment → mult stays 8.0
+    assert c.ev.competitor_multiplier == pytest.approx(8.0)
+    # With the share now properly estimated (not 0.25 cap), we expect
+    # a real decision: typically SKIP for low EV or ANOMALY for high.
+    assert c.ev.decision.value in {"PLAY", "SKIP", "ANOMALY"}
 
 
 def test_csv_writer_round_trip(tmp_path: Path) -> None:
     """The CSV must be parseable and contain the headline EV fields."""
     from kalshi_ws.intel.ev import Decision, EvResult, MarketSnapshot
     from kalshi_ws.intel.ev import LipProgram as IntelLipProgram
+    from kalshi_ws.intel.velocity import Confidence, SeriesTag, Velocity
 
+    velocity_tag = SeriesTag(
+        series_ticker="KX-ENT-SERIES",
+        info_velocity=Velocity.HIGH,
+        confidence=Confidence.MEDIUM,
+        correlation_group="entertainment_xyz",
+        notes="",
+        is_default=False,
+    )
     c = LipCandidate(
         market=_market(),
         program=_program(),
         category="Entertainment",
+        series_ticker="KX-ENT-SERIES",
+        velocity_tag=velocity_tag,
         snapshot=MarketSnapshot(
             ticker="KX-A",
             yes_bid=0.40,
@@ -221,6 +252,10 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
             top_yes_size=10.0,
             top_no_size=10.0,
             volume_24h=100,
+            category="Entertainment",
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
+            series_ticker="KX-ENT-SERIES",
         ),
         ev=EvResult(
             ticker="KX-A",
@@ -229,6 +264,7 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
             effective_size=50,
             capital_locked=47.50,
             share=0.20,
+            competitor_multiplier=8.0,
             discount_multiplier=0.5,
             effective_period_reward=1000.0,
             reward_per_day=6.66,
@@ -238,6 +274,8 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
             spread=0.05,
             mid=0.425,
             days_remaining=30.0,
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
         ),
     )
     out = tmp_path / "candidates.csv"
@@ -248,10 +286,16 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
     r = rows[0]
     assert r["ticker"] == "KX-A"
     assert r["category"] == "Entertainment"
+    assert r["series_ticker"] == "KX-ENT-SERIES"
+    assert r["info_velocity"] == "high"
+    assert r["confidence"] == "medium"
+    assert r["velocity_is_default"] == "False"
+    assert r["correlation_group"] == "entertainment_xyz"
     assert r["decision"] == "PLAY"
     assert r["play"] == "True"  # back-compat bool for dashboard agent
     assert float(r["ev_per_day"]) == pytest.approx(6.65)
     assert float(r["ev_pct_of_capital"]) == pytest.approx(0.14)
+    assert float(r["competitor_multiplier"]) == pytest.approx(8.0)
     assert int(r["volume_24h"]) == 100
     # Confirm we also wrote LIP program fields for the dashboard
     assert int(r["lip_period_reward_cents"]) == 250_000
