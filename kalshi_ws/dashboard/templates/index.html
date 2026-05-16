@@ -369,7 +369,7 @@
         {% for c in candidates %}
         <tr>
           <td class="col-rank">{{ loop.index }}</td>
-          <td class="col-ticker"><a href="https://kalshi.com/markets/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
+          <td class="col-ticker"><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
           <td class="col-category">
             {% if c.category %}
               <span class="badge badge-cat">{{ c.category }}</span>

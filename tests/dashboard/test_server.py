@@ -396,10 +396,11 @@ def test_index_renders_category_badge(client_with_data: TestClient) -> None:
 
 
 def test_index_clickable_ticker_anchor(client_with_data: TestClient) -> None:
-    """Each ticker must be wrapped in an anchor pointing to kalshi.com/markets/."""
+    """Each ticker must link to kalshi.com/markets/<series>/x/<event>."""
     resp = client_with_data.get("/")
     assert resp.status_code == 200
     assert "kalshi.com/markets/" in resp.text
+    assert "/x/" in resp.text  # placeholder slug pattern — new series/x/event format
 
 
 def test_index_concentration_callout_when_concentrated(

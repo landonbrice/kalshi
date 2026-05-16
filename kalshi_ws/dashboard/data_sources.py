@@ -25,6 +25,7 @@ class Candidate(TypedDict):
     """One row from lip_candidates.csv.  Unknown columns are silently ignored."""
 
     ticker: str
+    url: str
     title: str
     category: str
     play: bool  # True == PLAY, False == PASS
@@ -130,8 +131,10 @@ def load_candidates(csv_path: Path) -> list[Candidate]:
         for raw in reader:
             play_val = raw.get("play", "False")
             is_play = play_val.strip().lower() in {"true", "1", "yes"}
+            ticker_val = raw.get("ticker", "")
             candidate: Candidate = {
-                "ticker": raw.get("ticker", ""),
+                "ticker": ticker_val,
+                "url": kalshi_market_url(ticker_val),
                 "title": raw.get("title", ""),
                 "category": raw.get("category", ""),
                 "play": is_play,
@@ -302,6 +305,26 @@ def _query_fills(conn: sqlite3.Connection, limit: int = 20) -> list[Fill]:
 # ---------------------------------------------------------------------------
 # Aggregate helpers
 # ---------------------------------------------------------------------------
+
+
+def kalshi_market_url(ticker: str) -> str:
+    """Build a Kalshi frontend URL for a given market ticker.
+
+    Pattern: https://kalshi.com/markets/<series>/x/<event> (all lowercase).
+    The middle 'x' is a placeholder; Kalshi's router routes by series + event IDs
+    and ignores the slug. Example:
+        ticker=KXNBARETURN-26OKCJWILLIAMS8-519
+          -> series=kxnbareturn, event=kxnbareturn-26okcjwilliams8
+          -> https://kalshi.com/markets/kxnbareturn/x/kxnbareturn-26okcjwilliams8
+
+    For tickers without hyphens (rare), returns the series-only page.
+    """
+    parts = ticker.split("-")
+    series = parts[0].lower()
+    if len(parts) <= 1:
+        return f"https://kalshi.com/markets/{series}"
+    event = "-".join(parts[:-1]).lower()
+    return f"https://kalshi.com/markets/{series}/x/{event}"
 
 
 def concentration(rows: list[Candidate]) -> tuple[str, int, int] | None:

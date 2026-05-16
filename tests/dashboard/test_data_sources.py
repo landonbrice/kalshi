@@ -14,6 +14,7 @@ from kalshi_ws.dashboard.data_sources import (
     Candidate,
     concentration,
     freshness,
+    kalshi_market_url,
     load_candidates,
     load_meta,
     read_ledger,
@@ -369,6 +370,7 @@ def _make_candidate(ticker: str, play: bool = True) -> Candidate:
     """Return a minimal Candidate-like dict for concentration/totals tests."""
     return Candidate(
         ticker=ticker,
+        url=kalshi_market_url(ticker),
         title="Test",
         category="Sports",
         play=play,
@@ -449,3 +451,25 @@ def test_totals_zero_plays() -> None:
     assert result["play_count"] == 0
     assert result["capital"] == pytest.approx(0.0)
     assert result["ev_per_day"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# kalshi_market_url
+# ---------------------------------------------------------------------------
+
+
+def test_kalshi_market_url_three_segment_ticker() -> None:
+    url = kalshi_market_url("KXNBARETURN-26OKCJWILLIAMS8-519")
+    assert url == "https://kalshi.com/markets/kxnbareturn/x/kxnbareturn-26okcjwilliams8"
+
+
+def test_kalshi_market_url_two_segment_ticker() -> None:
+    # IIHF-style: KXIIHF-26-CAN -> series=kxiihf, event=kxiihf-26
+    url = kalshi_market_url("KXIIHF-26-CAN")
+    assert url == "https://kalshi.com/markets/kxiihf/x/kxiihf-26"
+
+
+def test_kalshi_market_url_single_segment_ticker() -> None:
+    # Defensive: no hyphens -> series page only.
+    url = kalshi_market_url("KXFOO")
+    assert url == "https://kalshi.com/markets/kxfoo"
