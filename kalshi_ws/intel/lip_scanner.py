@@ -106,11 +106,21 @@ def _passes_cheap_gates(
 
 
 async def _fetch_event_categories(
-    client: KalshiReadClient, event_tickers: Iterable[str]
+    client: KalshiReadClient,
+    event_tickers: Iterable[str],
+    *,
+    concurrency: int = 4,
 ) -> dict[str, str]:
-    """Look up `event.category` for each event ticker. Concurrent, error-tolerant."""
+    """Look up `event.category` for each event ticker.
+
+    Concurrency is intentionally low: empirically Kalshi rate-limits the
+    /events endpoint when fanning out 20+ concurrent requests, returning 429
+    (which raise_for_status surfaces). Failed lookups fall back to empty
+    string so the scanner can still rank by EV; the dashboard treats missing
+    category as "uncategorized".
+    """
     tickers = list(event_tickers)
-    sem = asyncio.Semaphore(20)
+    sem = asyncio.Semaphore(concurrency)
 
     async def one(et: str) -> tuple[str, str]:
         url = f"{client._settings.base_url}/events/{et}"  # noqa: SLF001
@@ -173,8 +183,14 @@ async def _score_with_orderbooks(
 
 
 def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
-    """Persist a ranked candidate list. Columns chosen for dashboard ingestion."""
+    """Persist a ranked candidate list atomically (tmp file + rename).
+
+    Atomic write matters because the dashboard polls this file; a half-written
+    CSV would either parse-fail or yield phantom rows. Columns chosen for
+    dashboard ingestion -- see also the dashboard agent brief.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
     fields = [
         "ticker",
         "title",
@@ -197,7 +213,7 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
         "lip_period_reward_cents",
         "lip_end_date",
     ]
-    with path.open("w", newline="") as f:
+    with tmp.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for c in candidates:
@@ -225,3 +241,4 @@ def write_candidates_csv(path: Path, candidates: list[LipCandidate]) -> None:
                     "lip_end_date": c.program.end_date.isoformat(),
                 }
             )
+    tmp.replace(path)

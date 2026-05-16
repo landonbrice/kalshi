@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+import json
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import typer
@@ -114,3 +116,128 @@ def scan_lip(
             f"{c.ev.days_remaining:>4.1f}  {c.ev.spread:>4.2f}  "
             f"{c.market.ticker} | {c.market.title[:60]}"
         )
+
+
+def _write_meta(
+    path: Path,
+    *,
+    loop_started: datetime,
+    scan_started: datetime,
+    iteration: int,
+    total: int,
+    plays: int,
+    category: str | None,
+    duration_seconds: float,
+) -> None:
+    """Sidecar JSON for the dashboard's freshness widget. Atomic write."""
+    meta = {
+        "loop_started_at": loop_started.isoformat(),
+        "scan_started_at": scan_started.isoformat(),
+        "scan_duration_seconds": round(duration_seconds, 2),
+        "iteration": iteration,
+        "candidates_total": total,
+        "candidates_play": plays,
+        "candidates_pass": total - plays,
+        "category_filter": category,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(meta, indent=2))
+    tmp.replace(path)
+
+
+@app.command("scan-lip-loop")
+@friendly_errors
+def scan_lip_loop(
+    interval: int = typer.Option(900, "--interval", help="Seconds between scans (default 15min)."),
+    duration_hours: float = typer.Option(
+        0.0, "--duration-hours", help="Hard stop after N hours (0 = no limit)."
+    ),
+    max_iterations: int = typer.Option(
+        0, "--max-iterations", help="Hard stop after N iterations (0 = no limit)."
+    ),
+    category: str = typer.Option(None, "--category", "-c", help="Optional category filter."),
+    min_ev: float = typer.Option(1.0, "--min-ev", help="EV/day floor in dollars."),
+    min_spread: float = typer.Option(0.02, "--min-spread", help="Minimum quotable spread."),
+    max_capital: float = typer.Option(150.0, "--max-capital", help="Per-market capital cap."),
+    concurrent: int = typer.Option(10, "--concurrent", help="Parallel orderbook fetches."),
+    out: Path = typer.Option(  # noqa: B008  (typer idiom)
+        DEFAULT_LIP_CSV, "--out", help="CSV output path; sidecar .meta.json next to it."
+    ),
+) -> None:
+    """Refresh the LIP candidates CSV every --interval seconds until stopped.
+
+    Per-iteration errors are logged but don't crash the loop -- next interval
+    will retry. Ctrl-C exits cleanly. Safety bounds: --duration-hours and
+    --max-iterations are enforced after each iteration.
+    """
+    settings = get_settings()
+    bootstrap(settings.db_path)
+    gate = GateParams(
+        min_ev_per_day=min_ev, min_spread=min_spread, max_capital=max_capital
+    )
+    meta_path = out.with_suffix(".meta.json")
+
+    loop_started = datetime.now(UTC)
+    deadline: datetime | None = (
+        loop_started + timedelta(hours=duration_hours) if duration_hours > 0 else None
+    )
+
+    typer.echo(
+        f"scan-lip-loop start @ {loop_started.isoformat()} "
+        f"interval={interval}s out={out}"
+        + (f" deadline={deadline.isoformat()}" if deadline else "")
+        + (f" max_iter={max_iterations}" if max_iterations else "")
+    )
+
+    async def _one_iteration() -> tuple[int, int]:
+        async with KalshiReadClient(settings) as client:
+            cands = await scan_lip_candidates(
+                client,
+                category_filter=category,
+                gate=gate,
+                concurrent_orderbooks=concurrent,
+                now=datetime.now(UTC),
+            )
+        write_candidates_csv(out, cands)
+        plays = sum(1 for c in cands if c.ev.play)
+        return len(cands), plays
+
+    iteration = 0
+    try:
+        while True:
+            iteration += 1
+            scan_started = datetime.now(UTC)
+            t0 = time.monotonic()
+            try:
+                total, plays = asyncio.run(_one_iteration())
+                elapsed = time.monotonic() - t0
+                _write_meta(
+                    meta_path,
+                    loop_started=loop_started,
+                    scan_started=scan_started,
+                    iteration=iteration,
+                    total=total,
+                    plays=plays,
+                    category=category,
+                    duration_seconds=elapsed,
+                )
+                typer.echo(
+                    f"[{scan_started.isoformat()}] iter={iteration} "
+                    f"total={total} play={plays} took={elapsed:.1f}s"
+                )
+            except Exception as e:  # log + keep going
+                typer.echo(
+                    f"[{datetime.now(UTC).isoformat()}] iter={iteration} ERROR: {e}",
+                    err=True,
+                )
+
+            if max_iterations and iteration >= max_iterations:
+                typer.echo(f"reached max-iterations={max_iterations}, stopping")
+                break
+            if deadline and datetime.now(UTC) >= deadline:
+                typer.echo("reached deadline, stopping")
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        typer.echo("\ninterrupted, stopping")
