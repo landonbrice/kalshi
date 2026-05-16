@@ -231,3 +231,218 @@ def test_api_ledger_empty(client: TestClient) -> None:
     assert data["positions"] == []
     assert data["recent_fills"] == []
     assert data["rebates"] == []
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for new feature tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client_concentrated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with 4-of-5 rows sharing the same ticker family."""
+    import kalshi_ws.dashboard.server as server_mod
+
+    csv_path = tmp_path / "lip_candidates.csv"
+    meta_path = tmp_path / "lip_candidates.meta.json"
+    db_path = tmp_path / "kalshi.db"
+
+    rows = [
+        _csv_row(ticker=f"KXMLBDEBUT-PLAYER{i}-26NOV01", play="True")
+        for i in range(4)
+    ] + [_csv_row(ticker="KXOTHER-26JUN01", play="True")]
+
+    csv_path.write_text(
+        _CSV_HEADER + "\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    meta = {
+        "loop_started_at": "2026-05-15T01:00:00+00:00",
+        "scan_started_at": "2026-05-15T01:05:00+00:00",
+        "scan_duration_seconds": 10.0,
+        "iteration": 3,
+        "candidates_total": 5,
+        "candidates_play": 5,
+        "candidates_pass": 0,
+        "category_filter": None,
+    }
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    _bootstrap_db(db_path)
+
+    monkeypatch.setattr(server_mod, "_CSV_PATH", csv_path)
+    monkeypatch.setattr(server_mod, "_META_PATH", meta_path)
+    monkeypatch.setattr(server_mod, "_DB_PATH", db_path)
+
+    return TestClient(server_mod.app)
+
+
+@pytest.fixture()
+def client_diverse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with 5 rows each in a distinct ticker family."""
+    import kalshi_ws.dashboard.server as server_mod
+
+    csv_path = tmp_path / "lip_candidates.csv"
+    meta_path = tmp_path / "lip_candidates.meta.json"
+    db_path = tmp_path / "kalshi.db"
+
+    rows = [
+        _csv_row(ticker=f"KXFAMILY{i}-26NOV01", play="True")
+        for i in range(5)
+    ]
+    csv_path.write_text(
+        _CSV_HEADER + "\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    meta = {
+        "loop_started_at": "2026-05-15T01:00:00+00:00",
+        "scan_started_at": "2026-05-15T01:05:00+00:00",
+        "scan_duration_seconds": 8.0,
+        "iteration": 2,
+        "candidates_total": 5,
+        "candidates_play": 5,
+        "candidates_pass": 0,
+        "category_filter": None,
+    }
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    _bootstrap_db(db_path)
+
+    monkeypatch.setattr(server_mod, "_CSV_PATH", csv_path)
+    monkeypatch.setattr(server_mod, "_META_PATH", meta_path)
+    monkeypatch.setattr(server_mod, "_DB_PATH", db_path)
+
+    return TestClient(server_mod.app)
+
+
+@pytest.fixture()
+def client_stale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with a STALE meta sidecar (scan >30 min ago)."""
+    import kalshi_ws.dashboard.server as server_mod
+
+    csv_path = tmp_path / "lip_candidates.csv"
+    meta_path = tmp_path / "lip_candidates.meta.json"
+    db_path = tmp_path / "kalshi.db"
+
+    csv_path.write_text(
+        _CSV_HEADER + "\n" + _csv_row() + "\n",
+        encoding="utf-8",
+    )
+    meta = {
+        "loop_started_at": "2026-05-15T00:00:00+00:00",
+        "scan_started_at": "2026-05-14T00:00:00+00:00",  # >24 h ago → definitely STALE
+        "scan_duration_seconds": 20.0,
+        "iteration": 7,
+        "candidates_total": 1,
+        "candidates_play": 1,
+        "candidates_pass": 0,
+        "category_filter": None,
+    }
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    _bootstrap_db(db_path)
+
+    monkeypatch.setattr(server_mod, "_CSV_PATH", csv_path)
+    monkeypatch.setattr(server_mod, "_META_PATH", meta_path)
+    monkeypatch.setattr(server_mod, "_DB_PATH", db_path)
+
+    return TestClient(server_mod.app)
+
+
+@pytest.fixture()
+def client_fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with a FRESH meta sidecar (scan just happened)."""
+    from datetime import UTC, datetime, timedelta
+
+    import kalshi_ws.dashboard.server as server_mod
+
+    csv_path = tmp_path / "lip_candidates.csv"
+    meta_path = tmp_path / "lip_candidates.meta.json"
+    db_path = tmp_path / "kalshi.db"
+
+    csv_path.write_text(
+        _CSV_HEADER + "\n" + _csv_row() + "\n",
+        encoding="utf-8",
+    )
+    # Scan started 5 minutes ago — well within the 30-min threshold
+    fresh_time = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    meta = {
+        "loop_started_at": "2026-05-15T00:00:00+00:00",
+        "scan_started_at": fresh_time,
+        "scan_duration_seconds": 11.0,
+        "iteration": 4,
+        "candidates_total": 1,
+        "candidates_play": 1,
+        "candidates_pass": 0,
+        "category_filter": None,
+    }
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    _bootstrap_db(db_path)
+
+    monkeypatch.setattr(server_mod, "_CSV_PATH", csv_path)
+    monkeypatch.setattr(server_mod, "_META_PATH", meta_path)
+    monkeypatch.setattr(server_mod, "_DB_PATH", db_path)
+
+    return TestClient(server_mod.app)
+
+
+# ---------------------------------------------------------------------------
+# Tests: new UI features
+# ---------------------------------------------------------------------------
+
+
+def test_index_renders_category_badge(client_with_data: TestClient) -> None:
+    """Category badge class must appear in the response HTML."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "badge-cat" in resp.text
+
+
+def test_index_clickable_ticker_anchor(client_with_data: TestClient) -> None:
+    """Each ticker must be wrapped in an anchor pointing to kalshi.com/markets/."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "kalshi.com/markets/" in resp.text
+
+
+def test_index_concentration_callout_when_concentrated(
+    client_concentrated: TestClient,
+) -> None:
+    """When >50% of PLAYs share a family, 'share event family' appears."""
+    resp = client_concentrated.get("/")
+    assert resp.status_code == 200
+    assert "share event family" in resp.text
+
+
+def test_index_no_concentration_callout_when_diverse(
+    client_diverse: TestClient,
+) -> None:
+    """When no family exceeds 50%, the callout must NOT appear."""
+    resp = client_diverse.get("/")
+    assert resp.status_code == 200
+    assert "share event family" not in resp.text
+
+
+def test_index_totals_row_present(client_with_data: TestClient) -> None:
+    """'TOTAL' must appear in the candidates table footer."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "TOTAL" in resp.text
+
+
+def test_index_stale_shows_launch_command(client_stale: TestClient) -> None:
+    """STALE page must contain the scan-lip-loop launch command."""
+    resp = client_stale.get("/")
+    assert resp.status_code == 200
+    assert "scan-lip-loop" in resp.text
+
+
+def test_index_fresh_hides_launch_command(client_fresh: TestClient) -> None:
+    """FRESH page must NOT contain the scan-lip-loop launch command."""
+    resp = client_fresh.get("/")
+    assert resp.status_code == 200
+    assert "scan-lip-loop" not in resp.text
+
+
+def test_index_shows_iteration_when_meta_present(client_with_data: TestClient) -> None:
+    """'iter ' text must appear when meta is present."""
+    resp = client_with_data.get("/")
+    assert resp.status_code == 200
+    assert "iter " in resp.text

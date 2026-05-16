@@ -22,10 +22,13 @@ import kalshi_ws.risk as risk
 from kalshi_ws.dashboard.data_sources import (
     Candidate,
     Ledger,
+    concentration,
     freshness,
     load_candidates,
     load_meta,
     read_ledger,
+    risk_usage,
+    totals,
 )
 
 # ---------------------------------------------------------------------------
@@ -84,8 +87,13 @@ def _gather_page_data() -> dict[str, object]:
     pass_rows = [c for c in candidates if not c["play"]]
     top_candidates: list[Candidate] = play_rows[:25]
 
+    conc = concentration(top_candidates)
+    row_totals = totals(top_candidates)
+    usage = risk_usage(ledger)
+
     return {
         "risk": _RISK_RAILS,
+        "risk_usage": usage,
         "candidates": top_candidates,
         "play_count": len(play_rows),
         "pass_count": len(pass_rows),
@@ -93,6 +101,8 @@ def _gather_page_data() -> dict[str, object]:
         "meta": meta,
         "freshness_label": label,
         "freshness_age": age_str,
+        "concentration": conc,
+        "row_totals": row_totals,
         "positions": ledger["positions"],
         "recent_fills": ledger["recent_fills"],
         "rebates": ledger["rebates"],

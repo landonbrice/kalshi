@@ -11,10 +11,13 @@ import pytest
 
 from kalshi_ws.dashboard.data_sources import (
     STALE_THRESHOLD_SECONDS,
+    Candidate,
+    concentration,
     freshness,
     load_candidates,
     load_meta,
     read_ledger,
+    totals,
 )
 
 # ---------------------------------------------------------------------------
@@ -355,3 +358,94 @@ def test_read_ledger_fills_capped_at_20(tmp_path: Path) -> None:
 
     ledger = read_ledger(db_path)
     assert len(ledger["recent_fills"]) == 20
+
+
+# ---------------------------------------------------------------------------
+# concentration
+# ---------------------------------------------------------------------------
+
+
+def _make_candidate(ticker: str, play: bool = True) -> Candidate:
+    """Return a minimal Candidate-like dict for concentration/totals tests."""
+    return Candidate(
+        ticker=ticker,
+        title="Test",
+        category="Sports",
+        play=play,
+        reason="play" if play else "pass",
+        ev_per_day=5.0,
+        reward_per_day=4.0,
+        share=0.8,
+        opp_cost_per_day=0.5,
+        capital_locked=100.0,
+        days_remaining=7.0,
+        spread=0.03,
+        mid=0.50,
+        yes_bid_cents=48,
+        yes_ask_cents=53,
+        top_yes_size=20.0,
+        top_no_size=30.0,
+        lip_target_size=10.0,
+        lip_period_reward_cents=3000,
+        lip_end_date="2026-05-21T00:00:00+00:00",
+    )
+
+
+def test_concentration_above_threshold() -> None:
+    """7-of-10 in same family → returns (family, 7, 10)."""
+    rows = (
+        [_make_candidate(f"KXMLBDEBUT-TWHITE-{i:02d}", play=True) for i in range(7)]
+        + [_make_candidate(f"KXOTHER-{i:02d}", play=True) for i in range(3)]
+    )
+    result = concentration(rows)
+    assert result is not None
+    family, count, total = result
+    assert family == "KXMLBDEBUT"
+    assert count == 7
+    assert total == 10
+
+
+def test_concentration_below_threshold() -> None:
+    """4-of-10 in same family (40%) → returns None.
+
+    The remaining 6 rows each belong to a distinct family so no single family
+    exceeds 50%.
+    """
+    rows = (
+        [_make_candidate(f"KXMLBDEBUT-TWHITE-{i:02d}", play=True) for i in range(4)]
+        + [_make_candidate(f"KXFAMILY{i:02d}-26NOV01", play=True) for i in range(6)]
+    )
+    result = concentration(rows)
+    assert result is None
+
+
+def test_concentration_zero_plays() -> None:
+    """No PLAY rows → returns None."""
+    rows = [_make_candidate(f"KXFOO-{i:02d}", play=False) for i in range(5)]
+    result = concentration(rows)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# totals
+# ---------------------------------------------------------------------------
+
+
+def test_totals_sums_play_rows_only() -> None:
+    """totals() sums capital and ev from PLAY rows, skipping PASS rows."""
+    play1 = _make_candidate("KXFOO-01", play=True)
+    play2 = _make_candidate("KXFOO-02", play=True)
+    pass1 = _make_candidate("KXBAR-01", play=False)
+
+    result = totals([play1, play2, pass1])
+    assert result["play_count"] == 2
+    assert result["capital"] == pytest.approx(200.0)
+    assert result["ev_per_day"] == pytest.approx(10.0)
+
+
+def test_totals_zero_plays() -> None:
+    """Empty list → all zeros with play_count=0."""
+    result = totals([])
+    assert result["play_count"] == 0
+    assert result["capital"] == pytest.approx(0.0)
+    assert result["ev_per_day"] == pytest.approx(0.0)

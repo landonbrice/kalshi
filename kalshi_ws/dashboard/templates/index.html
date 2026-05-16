@@ -15,13 +15,14 @@
       color: #c9d1d9;
       min-height: 100vh;
     }
-    a { color: #58a6ff; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
 
     /* --------------------------------------------------------- header */
     header {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       padding: 10px 18px;
       background: #161b22;
       border-bottom: 1px solid #30363d;
@@ -29,10 +30,20 @@
     header h1 { font-size: 16px; color: #e6edf3; letter-spacing: 0.03em; }
     .freshness {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
       font-size: 12px;
       color: #8b949e;
+    }
+    .freshness-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .freshness-meta {
+      font-size: 11px;
+      color: #484f58;
     }
     .badge {
       padding: 2px 8px;
@@ -44,6 +55,39 @@
     .badge-fresh  { background: #1a4731; color: #3fb950; border: 1px solid #2ea043; }
     .badge-stale  { background: #3d1f00; color: #f78166; border: 1px solid #da3633; }
     .badge-nodata { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-cat {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      background: #21262d;
+      color: #8b949e;
+      border: 1px solid #30363d;
+    }
+
+    /* --------------------------------------------------------- stale restart hint */
+    .restart-hint {
+      margin-top: 4px;
+      font-size: 11px;
+    }
+    .restart-hint summary {
+      cursor: pointer;
+      color: #f78166;
+      font-size: 11px;
+    }
+    .restart-hint summary:hover { text-decoration: underline; }
+    .restart-hint pre {
+      margin-top: 6px;
+      padding: 8px 10px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #c9d1d9;
+      white-space: pre;
+      overflow-x: auto;
+    }
 
     /* --------------------------------------------------------- layout */
     .main-grid {
@@ -68,14 +112,31 @@
     }
     .risk-row {
       display: flex;
-      justify-content: space-between;
+      flex-direction: column;
       padding: 4px 0;
       border-bottom: 1px solid #21262d;
       color: #c9d1d9;
     }
     .risk-row:last-child { border-bottom: none; }
+    .risk-row-top {
+      display: flex;
+      justify-content: space-between;
+    }
     .risk-label { color: #8b949e; font-size: 11px; }
     .risk-value { color: #f0883e; font-weight: 700; }
+    .risk-bar-track {
+      margin-top: 3px;
+      height: 4px;
+      background: #21262d;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .risk-bar-fill {
+      height: 4px;
+      background: #58a6ff;
+      border-radius: 2px;
+      min-width: 0;
+    }
 
     /* --------------------------------------------------------- candidates */
     .candidates-panel {
@@ -96,6 +157,17 @@
       margin-bottom: 8px;
     }
 
+    /* --------------------------------------------------------- concentration callout */
+    .callout {
+      margin-bottom: 10px;
+      padding: 5px 10px;
+      border-radius: 4px;
+      background: #2d2200;
+      border: 1px solid #6a4900;
+      color: #d4a017;
+      font-size: 12px;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -109,7 +181,10 @@
       border-bottom: 1px solid #30363d;
       white-space: nowrap;
     }
-    thead th:first-child, thead th.col-ticker, thead th.col-title { text-align: left; }
+    thead th:first-child,
+    thead th.col-ticker,
+    thead th.col-category,
+    thead th.col-title { text-align: left; }
     tbody tr:hover { background: #161b22; }
     tbody td {
       padding: 4px 8px;
@@ -117,17 +192,31 @@
       border-bottom: 1px solid #21262d;
       white-space: nowrap;
     }
-    tbody td.col-rank { color: #8b949e; text-align: left; }
-    tbody td.col-ticker { color: #58a6ff; text-align: left; font-weight: 600; }
-    tbody td.col-title  { text-align: left; color: #c9d1d9; max-width: 220px;
-                          overflow: hidden; text-overflow: ellipsis; }
-    tbody td.col-ev     { color: #3fb950; font-weight: 700; }
+    tbody td.col-rank     { color: #8b949e; text-align: left; }
+    tbody td.col-ticker   { color: #58a6ff; text-align: left; font-weight: 600; }
+    tbody td.col-category { text-align: left; }
+    tbody td.col-title    { text-align: left; color: #c9d1d9;
+                            white-space: normal; word-break: break-word;
+                            min-width: 200px; }
+    tbody td.col-ev       { color: #3fb950; font-weight: 700; }
     .no-data-row td {
       text-align: center;
       color: #8b949e;
       padding: 20px 8px;
       font-style: italic;
     }
+
+    /* --------------------------------------------------------- totals footer */
+    tfoot td {
+      padding: 5px 8px;
+      text-align: right;
+      border-top: 1px solid #30363d;
+      color: #e6edf3;
+      font-weight: 700;
+    }
+    tfoot td.col-total-label { text-align: left; color: #8b949e; font-weight: 600; }
+    tfoot td.col-total-ev    { color: #3fb950; }
+    tfoot td.col-total-cap   { color: #f0883e; }
 
     /* --------------------------------------------------------- ledger */
     .ledger-section {
@@ -171,14 +260,28 @@
   <h1>Kalshi Workstation</h1>
   <div class="freshness">
     {% if meta %}
-      Last scan: {{ freshness_age }}
-      {% if freshness_label == "FRESH" %}
-        <span class="badge badge-fresh">FRESH</span>
-      {% else %}
-        <span class="badge badge-stale">STALE</span>
+      <div class="freshness-top">
+        Last scan: {{ freshness_age }}
+        {% if freshness_label == "FRESH" %}
+          <span class="badge badge-fresh">FRESH</span>
+        {% else %}
+          <span class="badge badge-stale">STALE</span>
+        {% endif %}
+      </div>
+      <div class="freshness-meta">iter {{ meta.iteration }} &middot; last took {{ meta.scan_duration_seconds }}s</div>
+      {% if freshness_label == "STALE" %}
+      <details class="restart-hint">
+        <summary>how to restart</summary>
+        <pre><code>nohup .venv/bin/python -m kalshi_ws scan-lip-loop \
+  --interval 900 \
+  --out data/lip_candidates.csv \
+  >> data/scan-lip-loop.log 2>&1 &</code></pre>
+      </details>
       {% endif %}
     {% else %}
-      <span class="badge badge-nodata">no scanner data yet</span>
+      <div class="freshness-top">
+        <span class="badge badge-nodata">no scanner data yet</span>
+      </div>
     {% endif %}
   </div>
 </header>
@@ -190,20 +293,44 @@
   <div class="risk-panel">
     <h2>Risk rails</h2>
     <div class="risk-row">
-      <span class="risk-label">per market</span>
-      <span class="risk-value">${{ risk.PER_MARKET_MAX_POSITION_USD }}</span>
+      <div class="risk-row-top">
+        <span class="risk-label">per market</span>
+        <span class="risk-value">${{ risk.PER_MARKET_MAX_POSITION_USD }}</span>
+      </div>
+      {% set pct = ((risk_usage.per_market / risk.PER_MARKET_MAX_POSITION_USD * 100) if risk.PER_MARKET_MAX_POSITION_USD else 0) %}
+      <div class="risk-bar-track">
+        <div class="risk-bar-fill" style="width: {{ [pct, 100]|min }}%;"></div>
+      </div>
     </div>
     <div class="risk-row">
-      <span class="risk-label">per order</span>
-      <span class="risk-value">${{ risk.SINGLE_ORDER_MAX_USD }}</span>
+      <div class="risk-row-top">
+        <span class="risk-label">per order</span>
+        <span class="risk-value">${{ risk.SINGLE_ORDER_MAX_USD }}</span>
+      </div>
+      {% set pct = ((risk_usage.single_order / risk.SINGLE_ORDER_MAX_USD * 100) if risk.SINGLE_ORDER_MAX_USD else 0) %}
+      <div class="risk-bar-track">
+        <div class="risk-bar-fill" style="width: {{ [pct, 100]|min }}%;"></div>
+      </div>
     </div>
     <div class="risk-row">
-      <span class="risk-label">daily loss</span>
-      <span class="risk-value">${{ risk.DAILY_LOSS_LIMIT_USD }}</span>
+      <div class="risk-row-top">
+        <span class="risk-label">daily loss</span>
+        <span class="risk-value">${{ risk.DAILY_LOSS_LIMIT_USD }}</span>
+      </div>
+      {% set pct = ((risk_usage.daily_loss / risk.DAILY_LOSS_LIMIT_USD * 100) if risk.DAILY_LOSS_LIMIT_USD else 0) %}
+      <div class="risk-bar-track">
+        <div class="risk-bar-fill" style="width: {{ [pct, 100]|min }}%;"></div>
+      </div>
     </div>
     <div class="risk-row">
-      <span class="risk-label">total open</span>
-      <span class="risk-value">${{ risk.MAX_TOTAL_OPEN_EXPOSURE_USD }}</span>
+      <div class="risk-row-top">
+        <span class="risk-label">total open</span>
+        <span class="risk-value">${{ risk.MAX_TOTAL_OPEN_EXPOSURE_USD }}</span>
+      </div>
+      {% set pct = ((risk_usage.total_open / risk.MAX_TOTAL_OPEN_EXPOSURE_USD * 100) if risk.MAX_TOTAL_OPEN_EXPOSURE_USD else 0) %}
+      <div class="risk-bar-track">
+        <div class="risk-bar-fill" style="width: {{ [pct, 100]|min }}%;"></div>
+      </div>
     </div>
   </div>
 
@@ -219,18 +346,22 @@
     </div>
     {% endif %}
 
+    {% if concentration %}
+    <div class="callout">{{ concentration[1] }} of {{ concentration[2] }} candidates share event family: <strong>{{ concentration[0] }}</strong></div>
+    {% endif %}
+
     {% if candidates %}
     <table>
       <thead>
         <tr>
           <th>#</th>
           <th class="col-ticker">ticker</th>
+          <th class="col-category">category</th>
           <th>EV/day</th>
           <th>share</th>
           <th>cap$</th>
           <th>days</th>
           <th>spread</th>
-          <th>reward/day</th>
           <th class="col-title">title</th>
         </tr>
       </thead>
@@ -238,17 +369,35 @@
         {% for c in candidates %}
         <tr>
           <td class="col-rank">{{ loop.index }}</td>
-          <td class="col-ticker">{{ c.ticker }}</td>
+          <td class="col-ticker"><a href="https://kalshi.com/markets/{{ c.ticker }}" target="_blank" rel="noopener">{{ c.ticker }}</a></td>
+          <td class="col-category">
+            {% if c.category %}
+              <span class="badge badge-cat">{{ c.category }}</span>
+            {% else %}
+              <span style="color:#484f58;">&mdash;</span>
+            {% endif %}
+          </td>
           <td class="col-ev">${{ "%.2f"|format(c.ev_per_day) }}</td>
           <td>{{ "%.2f"|format(c.share) }}</td>
           <td>${{ "%.0f"|format(c.capital_locked) }}</td>
           <td>{{ "%.1f"|format(c.days_remaining) }}</td>
           <td>{{ "%.2f"|format(c.spread) }}</td>
-          <td>${{ "%.2f"|format(c.reward_per_day) }}</td>
-          <td class="col-title" title="{{ c.title }}">{{ c.title }}</td>
+          <td class="col-title">{{ c.title }}</td>
         </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr>
+          <td class="col-total-label" colspan="2">TOTAL &middot; {{ row_totals.play_count }} plays</td>
+          <td></td>
+          <td class="col-total-ev">${{ "%.2f"|format(row_totals.ev_per_day) }}</td>
+          <td></td>
+          <td class="col-total-cap">${{ "%.0f"|format(row_totals.capital) }}</td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      </tfoot>
     </table>
     {% else %}
     <table>
@@ -276,8 +425,8 @@
           <th class="col-ticker">ticker</th>
           <th>yes qty</th>
           <th>no qty</th>
-          <th>avg yes¢</th>
-          <th>avg no¢</th>
+          <th>avg yes&cent;</th>
+          <th>avg no&cent;</th>
         </tr>
       </thead>
       <tbody>
@@ -293,7 +442,7 @@
       </tbody>
     </table>
     {% else %}
-    <div class="empty-state">— none yet —</div>
+    <div class="empty-state">&mdash; none yet &mdash;</div>
     {% endif %}
   </div>
 
@@ -307,9 +456,9 @@
           <th class="col-ticker">ticker</th>
           <th>side</th>
           <th>action</th>
-          <th>price¢</th>
+          <th>price&cent;</th>
           <th>qty</th>
-          <th>fee¢</th>
+          <th>fee&cent;</th>
         </tr>
       </thead>
       <tbody>
@@ -326,7 +475,7 @@
       </tbody>
     </table>
     {% else %}
-    <div class="empty-state">— none yet — Phase 2 wiring lands the executor</div>
+    <div class="empty-state">&mdash; none yet &mdash; Phase 2 wiring lands the executor</div>
     {% endif %}
   </div>
 
@@ -338,7 +487,7 @@
       <thead>
         <tr>
           <th class="col-ticker">ticker</th>
-          <th>amount¢</th>
+          <th>amount&cent;</th>
           <th>source</th>
           <th>period end</th>
         </tr>
@@ -355,7 +504,7 @@
       </tbody>
     </table>
     {% else %}
-    <div class="empty-state">— none yet —</div>
+    <div class="empty-state">&mdash; none yet &mdash;</div>
     {% endif %}
   </div>
 

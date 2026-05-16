@@ -299,6 +299,82 @@ def _query_fills(conn: sqlite3.Connection, limit: int = 20) -> list[Fill]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Aggregate helpers
+# ---------------------------------------------------------------------------
+
+
+def concentration(rows: list[Candidate]) -> tuple[str, int, int] | None:
+    """Return (family, count, total_play) when the largest family is > 50% of plays.
+
+    Family is derived from the first hyphen-separated component of ticker.
+    Returns None when no family exceeds the threshold or there are no PLAY rows.
+    """
+    play_rows = [r for r in rows if r["play"]]
+    total_play = len(play_rows)
+    if total_play == 0:
+        return None
+
+    family_counts: dict[str, int] = {}
+    for r in play_rows:
+        family = r["ticker"].split("-")[0] if r["ticker"] else ""
+        family_counts[family] = family_counts.get(family, 0) + 1
+
+    top_family = max(family_counts, key=lambda k: family_counts[k])
+    top_count = family_counts[top_family]
+
+    if top_count / total_play > 0.5:
+        return (top_family, top_count, total_play)
+    return None
+
+
+def totals(rows: list[Candidate]) -> dict[str, float | int]:
+    """Sum capital_locked and ev_per_day over PLAY rows.
+
+    Returns {"capital": float, "ev_per_day": float, "play_count": int}.
+    """
+    play_rows = [r for r in rows if r["play"]]
+    return {
+        "capital": sum(r["capital_locked"] for r in play_rows),
+        "ev_per_day": sum(r["ev_per_day"] for r in play_rows),
+        "play_count": len(play_rows),
+    }
+
+
+def risk_usage(ledger: Ledger) -> dict[str, float]:
+    """Compute current usage of risk rails from ledger positions.
+
+    Phase 1: positions may be empty; placeholders return 0.
+    - per_market: largest single-position notional exposure
+    - total_open: sum of all position notional (worst-case 100¢ per contract)
+    - daily_loss: 0 (requires fills + intraday math — TODO Phase 2)
+    - single_order: 0 (not tracked yet — TODO Phase 2)
+    """
+    positions = ledger["positions"]
+    if not positions:
+        return {
+            "per_market": 0.0,
+            "total_open": 0.0,
+            "daily_loss": 0.0,  # TODO Phase 2
+            "single_order": 0.0,  # TODO Phase 2
+        }
+
+    per_market_values: list[float] = []
+    total_open = 0.0
+    for p in positions:
+        # Worst-case: each contract worth $1.00 (100¢)
+        notional = (p["yes_qty"] + p["no_qty"]) * 1.0
+        per_market_values.append(notional)
+        total_open += notional
+
+    return {
+        "per_market": max(per_market_values),
+        "total_open": total_open,
+        "daily_loss": 0.0,  # TODO Phase 2
+        "single_order": 0.0,  # TODO Phase 2
+    }
+
+
 def _query_rebates(conn: sqlite3.Connection) -> list[Rebate]:
     try:
         rows = conn.execute(
