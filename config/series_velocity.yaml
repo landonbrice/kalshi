@@ -193,3 +193,121 @@ series:
     confidence: high
     correlation_group: fed
     notes: "Excluded: maker fee + macro shock risk."
+
+  # ===== Active in current LIP universe (added 2026-05-16) =====
+  # Series observed in live LIP scans that previously defaulted to HIGH/LOW.
+  # Explicit tags upgrade confidence and lock the classification reasoning.
+
+  # --- Entertainment: album sales thresholds (HIGH) ---
+  # Multi-threshold markets on a single release. Static correlation_group is
+  # broader than ideal — per-release templating is v1 work. For now, treat any
+  # same-artist family as one capital unit when sizing manually.
+
+  KXPUREALBUMS:
+    info_velocity: high
+    confidence: medium
+    correlation_group: pure_album_sales
+    notes: "First-week pure album sales thresholds. Leak-prone (BuzzAngle, Hits Daily Double precede Billboard). Treat all same-album thresholds as one group."
+
+  KXALBUMEQUIV:
+    info_velocity: high
+    confidence: medium
+    correlation_group: album_equivalent_units
+    notes: "Album-equivalent units (sales + streaming). Same leak surface as KXPUREALBUMS; group with same-album KXPUREALBUMS rows when sizing."
+
+  # --- Awards (HIGH) ---
+
+  KXTONYAWARDS:
+    info_velocity: high
+    confidence: medium
+    correlation_group: tony_awards
+    notes: "Single voting outcome. Pro-dense around nomination/ceremony windows."
+
+  # --- Politics (HIGH) ---
+
+  KXAPRPOTUS:
+    info_velocity: high
+    confidence: medium
+    correlation_group: potus_approval
+    notes: "Polling release driven. Multi-threshold markets — group all KXAPRPOTUS-<period>-* together."
+
+  # --- Sports: player decision / news markets (HIGH) ---
+  # Resolution depends on a single roster/medical/management decision or
+  # discrete news event — exactly the failure mode the spread×velocity gate
+  # is designed for.
+
+  KXNBARETURN:
+    info_velocity: high
+    confidence: medium
+    correlation_group: nba_player_return
+    notes: "'Will player play before <date>' — single coach/medical decision. Chart prototype: 100→25→75 round-trips per news cycle (cf. JWilliams 2026-05-15)."
+
+  KXNBA2NDTEAM:
+    info_velocity: high
+    confidence: medium
+    correlation_group: all_nba_voting
+    notes: "All-NBA 2nd Team selection — single annual media vote. Settlement spike at announcement."
+
+  KXMLBDEBUT:
+    info_velocity: high
+    confidence: medium
+    correlation_group: mlb_debut
+    notes: "MLB rookie call-up date — single front-office decision."
+
+  KXMLBTRADE:
+    info_velocity: high
+    confidence: medium
+    correlation_group: mlb_trade
+    notes: "Trade announcements — news-driven, embargo-prone around deadline."
+
+  KXARODGRETIRE:
+    info_velocity: high
+    confidence: medium
+    correlation_group: player_retirement
+    notes: "Single career-decision announcement. One press conference = resolution."
+
+  KXNFLSUPDRAFTPICK:
+    info_velocity: high
+    confidence: medium
+    correlation_group: nfl_sup_draft
+    notes: "Supplemental draft entry decision by player + team. Low-volume, news-driven."
+
+  # --- Sports: coach / manager hiring (HIGH) ---
+
+  KXCOACHOUTMLB:
+    info_velocity: high
+    confidence: medium
+    correlation_group: mlb_coach_status
+    notes: "Coach firing — single front-office decision, often pre-leaked by beat writers."
+
+  KXNEXTMANAGERMLB:
+    info_velocity: high
+    confidence: medium
+    correlation_group: mlb_next_manager
+    notes: "Hiring decision — news-driven, candidate-specific. Group all KXNEXTMANAGERMLB-<team>-* together."
+
+  KXNEXTMANAGERLALIGA:
+    info_velocity: high
+    confidence: medium
+    correlation_group: laliga_next_manager
+    notes: "Same structure as KXNEXTMANAGERMLB. European football reporting cycle differs but velocity bucket matches."
+
+  KXNEXTNBACOACH:
+    info_velocity: high
+    confidence: medium
+    correlation_group: nba_next_coach
+    notes: "Hiring decision — Shams/Woj-driven leaks precede official announcements."
+
+  # --- Sports: tournament outcomes ---
+
+  KXWT20WORLDCUP:
+    info_velocity: high
+    confidence: low
+    correlation_group: t20_world_cup
+    notes: "Single-game outcomes during tournament. HIGH during play; could MEDIUM in pre-tournament dormant phase."
+
+  KXIPLPLAYOFF:
+    info_velocity: medium
+    confidence: low
+    correlation_group: ipl_playoff_qualification
+    notes: "Multi-game standings progression — fair value drifts with each game outcome rather than shocking on a single news event. Bump to HIGH on final-round days."

@@ -81,6 +81,40 @@ def test_market_coerces_volume_24h_from_volume_24h_fp() -> None:
     assert m.yes_ask == 55
 
 
+def test_market_exposes_kalshi_float_fields_for_dashboard() -> None:
+    """Dashboard wants float-precision volume / OI / liquidity (no truncation).
+
+    These mirror Kalshi's `/markets/{ticker}` payload exactly; the int
+    `volume` / `volume_24h` / `open_interest` fields stay for back-compat
+    but lose decimals.
+    """
+    payload = {
+        "ticker": "KXNBARETURN-26OKCJWILLIAMS8-519",
+        "title": "Williams to return",
+        "status": "active",
+        "volume_fp": 1512.65,
+        "volume_24h_fp": 1404.89,
+        "open_interest_fp": 868.54,
+        "liquidity_dollars": 0.0000,
+    }
+    m = Market.model_validate(payload)
+    assert m.volume_fp == pytest.approx(1512.65)
+    assert m.volume_24h_fp == pytest.approx(1404.89)
+    assert m.open_interest_fp == pytest.approx(868.54)
+    assert m.liquidity_dollars == pytest.approx(0.0)
+
+
+def test_market_defaults_new_float_fields_to_zero() -> None:
+    """Missing float fields default to 0.0 (matches int defaults for back-compat)."""
+    m = Market.model_validate(
+        {"ticker": "KX-FOO", "title": "Foo", "status": "active"}
+    )
+    assert m.volume_fp == 0.0
+    assert m.volume_24h_fp == 0.0
+    assert m.open_interest_fp == 0.0
+    assert m.liquidity_dollars == 0.0
+
+
 def test_markets_response_parses_list_and_cursor() -> None:
     payload = {
         "markets": [

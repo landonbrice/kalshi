@@ -315,3 +315,159 @@ def test_csv_writer_round_trip(tmp_path: Path) -> None:
     # Avoid an unused-import flake — also confirms the intel type re-exports work
     _ = IntelLipProgram
     json.dumps(r)  # row should be JSON-serializable strings
+
+
+def test_csv_writer_emits_dashboard_quality_columns(tmp_path: Path) -> None:
+    """`volume_total`, `open_interest`, `liquidity_dollars` mirror Kalshi's
+    float fields so the dashboard can tell paper opportunities from real ones.
+    """
+    from kalshi_ws.intel.ev import Decision, EvComponents, EvResult, MarketSnapshot
+    from kalshi_ws.intel.velocity import Confidence, SeriesTag, Velocity
+
+    velocity_tag = SeriesTag(
+        series_ticker="KX-X",
+        info_velocity=Velocity.HIGH,
+        confidence=Confidence.MEDIUM,
+        correlation_group=None,
+        notes="",
+        is_default=False,
+    )
+    market = _market(
+        volume_fp=1512.65,
+        volume_24h_fp=1404.89,
+        open_interest_fp=868.54,
+        liquidity_dollars=0.0,
+    )
+    c = LipCandidate(
+        market=market,
+        program=_program(),
+        category="Sports",
+        series_ticker="KX-X",
+        velocity_tag=velocity_tag,
+        snapshot=MarketSnapshot(
+            ticker=market.ticker,
+            yes_bid=0.40,
+            yes_ask=0.45,
+            status="active",
+            top_yes_size=10.0,
+            top_no_size=10.0,
+            volume_24h=100,
+            category="Sports",
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
+            series_ticker="KX-X",
+        ),
+        ev=EvResult(
+            ticker=market.ticker,
+            decision=Decision.SKIP,
+            reason="skip",
+            effective_size=50,
+            capital_locked=47.50,
+            share=0.20,
+            competitor_multiplier=8.0,
+            discount_multiplier=0.5,
+            effective_period_reward=1000.0,
+            expected_fills_per_day=0.0,
+            components=EvComponents(
+                lip_rebate=0.0,
+                spread_capture=0.0,
+                adverse_selection=0.0,
+                fees=0.0,
+                opp_cost=0.0,
+                total=0.0,
+            ),
+            ev_per_day=0.0,
+            reward_per_day=0.0,
+            opp_cost_per_day=0.0,
+            ev_pct_of_capital=0.0,
+            ev_low=0.0,
+            ev_high=0.0,
+            spread=0.05,
+            mid=0.425,
+            days_remaining=30.0,
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
+        ),
+    )
+    out = tmp_path / "candidates.csv"
+    write_candidates_csv(out, [c])
+
+    rows = list(csv.DictReader(out.open()))
+    assert len(rows) == 1
+    r = rows[0]
+    assert float(r["volume_total"]) == pytest.approx(1512.65)
+    assert float(r["open_interest"]) == pytest.approx(868.54)
+    assert float(r["liquidity_dollars"]) == pytest.approx(0.0)
+
+
+def test_csv_writer_defaults_dashboard_columns_to_zero(tmp_path: Path) -> None:
+    """When Kalshi doesn't return the `_fp` fields, the new columns write 0.0."""
+    from kalshi_ws.intel.ev import Decision, EvComponents, EvResult, MarketSnapshot
+    from kalshi_ws.intel.velocity import Confidence, SeriesTag, Velocity
+
+    velocity_tag = SeriesTag(
+        series_ticker="KX-X",
+        info_velocity=Velocity.HIGH,
+        confidence=Confidence.MEDIUM,
+        correlation_group=None,
+        notes="",
+        is_default=False,
+    )
+    c = LipCandidate(
+        market=_market(),  # no _fp fields set
+        program=_program(),
+        category="Sports",
+        series_ticker="KX-X",
+        velocity_tag=velocity_tag,
+        snapshot=MarketSnapshot(
+            ticker="KX-A",
+            yes_bid=0.40,
+            yes_ask=0.45,
+            status="active",
+            top_yes_size=10.0,
+            top_no_size=10.0,
+            volume_24h=100,
+            category="Sports",
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
+            series_ticker="KX-X",
+        ),
+        ev=EvResult(
+            ticker="KX-A",
+            decision=Decision.SKIP,
+            reason="skip",
+            effective_size=50,
+            capital_locked=47.50,
+            share=0.20,
+            competitor_multiplier=8.0,
+            discount_multiplier=0.5,
+            effective_period_reward=1000.0,
+            expected_fills_per_day=0.0,
+            components=EvComponents(
+                lip_rebate=0.0,
+                spread_capture=0.0,
+                adverse_selection=0.0,
+                fees=0.0,
+                opp_cost=0.0,
+                total=0.0,
+            ),
+            ev_per_day=0.0,
+            reward_per_day=0.0,
+            opp_cost_per_day=0.0,
+            ev_pct_of_capital=0.0,
+            ev_low=0.0,
+            ev_high=0.0,
+            spread=0.05,
+            mid=0.425,
+            days_remaining=30.0,
+            info_velocity=Velocity.HIGH,
+            confidence=Confidence.MEDIUM,
+        ),
+    )
+    out = tmp_path / "candidates.csv"
+    write_candidates_csv(out, [c])
+
+    r = next(csv.DictReader(out.open()))
+    assert float(r["volume_total"]) == 0.0
+    assert float(r["open_interest"]) == 0.0
+    assert float(r["liquidity_dollars"]) == 0.0

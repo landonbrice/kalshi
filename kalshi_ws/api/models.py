@@ -37,6 +37,12 @@ class Market(BaseModel):
     volume: int = 0  # lifetime contracts
     volume_24h: int = 0  # contracts traded in the last 24h; 0 = stale / no flow
     open_interest: int = 0
+    # Float mirrors of Kalshi's `_fp` fields; preserve decimal precision the
+    # int fields above truncate. Dashboard consumes these via the CSV writer.
+    volume_fp: float = 0.0
+    volume_24h_fp: float = 0.0
+    open_interest_fp: float = 0.0
+    liquidity_dollars: float = 0.0
     event_ticker: str | None = None
     close_time: datetime | None = None
     category: str | None = None  # Filled from event lookup by the scanner.
