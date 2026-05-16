@@ -6,6 +6,7 @@ Scanners and decision-support code consume these models, never raw JSON dicts.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,10 @@ class Market(BaseModel):
     MUST filter unquoted markets first (`yes_bid == 0 or yes_ask == 100`),
     otherwise empty books rank highest by spread. Don't tighten these defaults
     to non-zero values — real Kalshi markets legitimately publish 0/100.
+
+    Live Kalshi v2 sends bids/asks as `yes_bid_dollars` / `yes_ask_dollars`
+    string fields (e.g. "0.4500"). The before-validator converts those to
+    integer cents so the rest of the codebase can treat prices uniformly.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -34,6 +39,26 @@ class Market(BaseModel):
     event_ticker: str | None = None
     close_time: datetime | None = None
     category: str | None = None  # Filled from event lookup by the scanner.
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_dollar_strings(cls, data: Any) -> Any:
+        """Promote `yes_bid_dollars` / `yes_ask_dollars` strings to int cents."""
+        if not isinstance(data, dict):
+            return data
+        if "yes_bid" not in data and "yes_bid_dollars" in data:
+            with contextlib.suppress(TypeError, ValueError):
+                data["yes_bid"] = round(float(data["yes_bid_dollars"]) * 100)
+        if "yes_ask" not in data and "yes_ask_dollars" in data:
+            with contextlib.suppress(TypeError, ValueError):
+                # An ask of 0.0 means "no ask"; preserve that as 100 (default).
+                ask_d = float(data["yes_ask_dollars"])
+                if ask_d > 0:
+                    data["yes_ask"] = round(ask_d * 100)
+        if "volume" not in data and "volume_fp" in data:
+            with contextlib.suppress(TypeError, ValueError):
+                data["volume"] = int(float(data["volume_fp"]))
+        return data
 
 
 class MarketsResponse(BaseModel):
