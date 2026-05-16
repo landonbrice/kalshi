@@ -241,3 +241,17 @@ def scan_lip_loop(
             time.sleep(interval)
     except KeyboardInterrupt:
         typer.echo("\ninterrupted, stopping")
+
+
+@app.command("dashboard")
+@friendly_errors
+def dashboard(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port"),
+) -> None:
+    """Launch the local LIP dashboard at http://127.0.0.1:8765."""
+    import uvicorn
+
+    from kalshi_ws.dashboard.server import app as fastapi_app
+
+    uvicorn.run(fastapi_app, host=host, port=port, log_level="info")

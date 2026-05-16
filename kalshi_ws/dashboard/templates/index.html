@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="refresh" content="30" />
+  <title>Kalshi Workstation</title>
+  <style>
+    /* --------------------------------------------------------- reset/base */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 13px;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+    }
+    a { color: #58a6ff; }
+
+    /* --------------------------------------------------------- header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 18px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+    header h1 { font-size: 16px; color: #e6edf3; letter-spacing: 0.03em; }
+    .freshness {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+    }
+    .badge-fresh  { background: #1a4731; color: #3fb950; border: 1px solid #2ea043; }
+    .badge-stale  { background: #3d1f00; color: #f78166; border: 1px solid #da3633; }
+    .badge-nodata { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+
+    /* --------------------------------------------------------- layout */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 0;
+      border-bottom: 1px solid #30363d;
+    }
+
+    /* --------------------------------------------------------- risk rails */
+    .risk-panel {
+      padding: 16px;
+      border-right: 1px solid #30363d;
+      border-bottom: 1px solid #30363d;
+    }
+    .risk-panel h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8b949e;
+      margin-bottom: 10px;
+    }
+    .risk-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+      color: #c9d1d9;
+    }
+    .risk-row:last-child { border-bottom: none; }
+    .risk-label { color: #8b949e; font-size: 11px; }
+    .risk-value { color: #f0883e; font-weight: 700; }
+
+    /* --------------------------------------------------------- candidates */
+    .candidates-panel {
+      padding: 16px;
+      border-bottom: 1px solid #30363d;
+      overflow-x: auto;
+    }
+    .candidates-panel h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8b949e;
+      margin-bottom: 10px;
+    }
+    .summary-line {
+      font-size: 11px;
+      color: #8b949e;
+      margin-bottom: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    thead th {
+      text-align: right;
+      color: #8b949e;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-bottom: 1px solid #30363d;
+      white-space: nowrap;
+    }
+    thead th:first-child, thead th.col-ticker, thead th.col-title { text-align: left; }
+    tbody tr:hover { background: #161b22; }
+    tbody td {
+      padding: 4px 8px;
+      text-align: right;
+      border-bottom: 1px solid #21262d;
+      white-space: nowrap;
+    }
+    tbody td.col-rank { color: #8b949e; text-align: left; }
+    tbody td.col-ticker { color: #58a6ff; text-align: left; font-weight: 600; }
+    tbody td.col-title  { text-align: left; color: #c9d1d9; max-width: 220px;
+                          overflow: hidden; text-overflow: ellipsis; }
+    tbody td.col-ev     { color: #3fb950; font-weight: 700; }
+    .no-data-row td {
+      text-align: center;
+      color: #8b949e;
+      padding: 20px 8px;
+      font-style: italic;
+    }
+
+    /* --------------------------------------------------------- ledger */
+    .ledger-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+    }
+    .ledger-panel {
+      padding: 16px;
+      border-right: 1px solid #30363d;
+    }
+    .ledger-panel:last-child { border-right: none; }
+    .ledger-panel h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8b949e;
+      margin-bottom: 10px;
+    }
+    .empty-state {
+      color: #484f58;
+      font-style: italic;
+      font-size: 12px;
+      padding: 8px 0;
+    }
+
+    /* --------------------------------------------------------- footer */
+    footer {
+      padding: 8px 18px;
+      font-size: 11px;
+      color: #484f58;
+      text-align: right;
+      border-top: 1px solid #30363d;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================================================================ HEADER -->
+<header>
+  <h1>Kalshi Workstation</h1>
+  <div class="freshness">
+    {% if meta %}
+      Last scan: {{ freshness_age }}
+      {% if freshness_label == "FRESH" %}
+        <span class="badge badge-fresh">FRESH</span>
+      {% else %}
+        <span class="badge badge-stale">STALE</span>
+      {% endif %}
+    {% else %}
+      <span class="badge badge-nodata">no scanner data yet</span>
+    {% endif %}
+  </div>
+</header>
+
+<!-- ============================================================= MAIN GRID -->
+<div class="main-grid">
+
+  <!-- -------------------------------------------------- Risk rails -->
+  <div class="risk-panel">
+    <h2>Risk rails</h2>
+    <div class="risk-row">
+      <span class="risk-label">per market</span>
+      <span class="risk-value">${{ risk.PER_MARKET_MAX_POSITION_USD }}</span>
+    </div>
+    <div class="risk-row">
+      <span class="risk-label">per order</span>
+      <span class="risk-value">${{ risk.SINGLE_ORDER_MAX_USD }}</span>
+    </div>
+    <div class="risk-row">
+      <span class="risk-label">daily loss</span>
+      <span class="risk-value">${{ risk.DAILY_LOSS_LIMIT_USD }}</span>
+    </div>
+    <div class="risk-row">
+      <span class="risk-label">total open</span>
+      <span class="risk-value">${{ risk.MAX_TOTAL_OPEN_EXPOSURE_USD }}</span>
+    </div>
+  </div>
+
+  <!-- -------------------------------------------------- Candidates table -->
+  <div class="candidates-panel">
+    <h2>LIP candidates — top 25 PLAY by EV/day</h2>
+    {% if meta %}
+    <div class="summary-line">
+      {{ play_count }} PLAY &middot; {{ pass_count }} PASS &middot; {{ total_scanned }} scanned
+      {% if meta.category_filter %}
+        &middot; category: {{ meta.category_filter }}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if candidates %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th class="col-ticker">ticker</th>
+          <th>EV/day</th>
+          <th>share</th>
+          <th>cap$</th>
+          <th>days</th>
+          <th>spread</th>
+          <th>reward/day</th>
+          <th class="col-title">title</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        <tr>
+          <td class="col-rank">{{ loop.index }}</td>
+          <td class="col-ticker">{{ c.ticker }}</td>
+          <td class="col-ev">${{ "%.2f"|format(c.ev_per_day) }}</td>
+          <td>{{ "%.2f"|format(c.share) }}</td>
+          <td>${{ "%.0f"|format(c.capital_locked) }}</td>
+          <td>{{ "%.1f"|format(c.days_remaining) }}</td>
+          <td>{{ "%.2f"|format(c.spread) }}</td>
+          <td>${{ "%.2f"|format(c.reward_per_day) }}</td>
+          <td class="col-title" title="{{ c.title }}">{{ c.title }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <table>
+      <tbody>
+        <tr class="no-data-row">
+          <td>No PLAY candidates — scanner CSV absent or empty.</td>
+        </tr>
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+</div><!-- /main-grid -->
+
+<!-- ============================================================= LEDGER -->
+<div class="ledger-section">
+
+  <!-- Positions -->
+  <div class="ledger-panel">
+    <h2>Positions ({{ positions|length }})</h2>
+    {% if positions %}
+    <table>
+      <thead>
+        <tr>
+          <th class="col-ticker">ticker</th>
+          <th>yes qty</th>
+          <th>no qty</th>
+          <th>avg yes¢</th>
+          <th>avg no¢</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in positions %}
+        <tr>
+          <td class="col-ticker">{{ p.ticker }}</td>
+          <td>{{ p.yes_qty }}</td>
+          <td>{{ p.no_qty }}</td>
+          <td>{{ p.avg_yes_cost_cents }}</td>
+          <td>{{ p.avg_no_cost_cents }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">— none yet —</div>
+    {% endif %}
+  </div>
+
+  <!-- Recent fills -->
+  <div class="ledger-panel">
+    <h2>Recent fills ({{ recent_fills|length }})</h2>
+    {% if recent_fills %}
+    <table>
+      <thead>
+        <tr>
+          <th class="col-ticker">ticker</th>
+          <th>side</th>
+          <th>action</th>
+          <th>price¢</th>
+          <th>qty</th>
+          <th>fee¢</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in recent_fills %}
+        <tr>
+          <td class="col-ticker">{{ f.ticker }}</td>
+          <td>{{ f.side }}</td>
+          <td>{{ f.action }}</td>
+          <td>{{ f.price_cents }}</td>
+          <td>{{ f.qty }}</td>
+          <td>{{ f.fee_cents }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">— none yet — Phase 2 wiring lands the executor</div>
+    {% endif %}
+  </div>
+
+  <!-- Rebates -->
+  <div class="ledger-panel">
+    <h2>Rebates ({{ rebates|length }})</h2>
+    {% if rebates %}
+    <table>
+      <thead>
+        <tr>
+          <th class="col-ticker">ticker</th>
+          <th>amount¢</th>
+          <th>source</th>
+          <th>period end</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rebates %}
+        <tr>
+          <td class="col-ticker">{{ r.ticker }}</td>
+          <td>{{ r.amount_cents }}</td>
+          <td>{{ r.source }}</td>
+          <td>{{ r.period_end }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">— none yet —</div>
+    {% endif %}
+  </div>
+
+</div><!-- /ledger-section -->
+
+<footer>
+  Generated {{ generated_at }} &middot; auto-refresh every 30 s
+</footer>
+
+</body>
+</html>

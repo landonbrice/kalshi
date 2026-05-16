@@ -23,6 +23,12 @@ cp .env.example .env  # then fill in real values
 - [x] SQLite ledger bootstrap (`kalshi_ws/state/`)
 - [x] `python -m kalshi_ws hello` prints a real Kalshi market
 
+## Dashboard
+
+```bash
+python -m kalshi_ws dashboard   # launches local FastAPI dashboard at http://127.0.0.1:8765
+```
+
 ## Smoke test
 
 ```bash
